@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type BlobItem = {
   url: string;
@@ -9,21 +9,55 @@ type BlobItem = {
   uploadedAt: string;
 };
 
+type BatchItem = {
+  file: File;
+  key: string;
+  status: "idle" | "uploading" | "done" | "error";
+  result?: any;
+};
+
+function normalizeKey(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_-]/g, "");
+}
+
+function suggestKeyFromFilename(name: string) {
+  // 787_FCOM.pdf => fcom_787 (لو تبي عكسها عدّل)
+  const base = name.replace(/\.pdf$/i, "");
+  const s = base.toLowerCase();
+
+  // قواعد بسيطة قابلة للتعديل
+  const has787 = /787/.test(s);
+  const has777 = /777/.test(s);
+
+  let type = "";
+  if (/(fcom)/.test(s)) type = "fcom";
+  else if (/(fctm)/.test(s)) type = "fctm";
+  else if (/(qrh)/.test(s)) type = "qrh";
+  else if (/(mel)/.test(s)) type = "mel";
+  else if (/(oma|om-a)/.test(s)) type = "oma";
+  else if (/(omb|om-b)/.test(s)) type = "omb";
+  else type = "manual";
+
+  let ac = has787 ? "787" : has777 ? "777" : "";
+  return normalizeKey(ac ? `${type}_${ac}` : type);
+}
+
 export default function AdminUploadPage() {
   const [secret, setSecret] = useState("");
   const [ok, setOk] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [file, setFile] = useState<File | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [resData, setResData] = useState<Record<string, any> | null>(null);
-
   const [blobs, setBlobs] = useState<BlobItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
 
-  // ✅ Replace-by-key
-  const [key, setKey] = useState("");
-  const [prune, setPrune] = useState(true);
+  const [deleteOld, setDeleteOld] = useState(true);
+
+  const [batch, setBatch] = useState<BatchItem[]>([]);
+  const [running, setRunning] = useState(false);
 
   useEffect(() => {
     setOk(false);
@@ -53,39 +87,43 @@ export default function AdminUploadPage() {
     setOk(false);
   }
 
-  async function upload() {
-    if (!file) return;
-
-    setLoading(true);
-    setResData(null);
-
-    const form = new FormData();
-    form.append("file", file);
-
-    const res = await fetch("/api/admin/upload", {
-      method: "POST",
-      headers: { "x-admin-secret": secret.trim() },
-      body: form,
+  async function loadBlobs(s: string) {
+    setListLoading(true);
+    const res = await fetch("/api/admin/blobs", {
+      headers: { "x-admin-secret": s },
     });
-
     const data = await res.json().catch(() => ({}));
-    setResData({ status: res.status, ...data });
-    setLoading(false);
+    setListLoading(false);
 
-    if (res.ok) await loadBlobs(secret.trim());
+    if (res.ok && data?.blobs) setBlobs(data.blobs);
   }
 
-  // ✅ Replace (update) by key
-  async function replace() {
-    if (!file) return;
+  function onPickFiles(files: FileList | null) {
+    if (!files) return;
 
-    setLoading(true);
-    setResData(null);
+    const items: BatchItem[] = Array.from(files)
+      .filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name))
+      .map((f) => ({
+        file: f,
+        key: suggestKeyFromFilename(f.name),
+        status: "idle",
+      }));
 
+    setBatch(items);
+  }
+
+  function updateKey(idx: number, key: string) {
+    setBatch((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, key: normalizeKey(key) } : it))
+    );
+  }
+
+  async function replaceOne(item: BatchItem) {
     const form = new FormData();
-    form.append("file", file);
-    form.append("key", key.trim());
-    form.append("prune", prune ? "true" : "false");
+    form.append("file", item.file);
+    form.append("key", item.key);
+    // نرسل deleteOld كـ flag (لو ما تستخدمه بالسيرفر حالياً ما يأثر)
+    form.append("deleteOld", deleteOld ? "1" : "0");
 
     const res = await fetch("/api/admin/replace", {
       method: "POST",
@@ -93,41 +131,69 @@ export default function AdminUploadPage() {
       body: form,
     });
 
-    const data = await res.json().catch(() => ({}));
-    setResData({ status: res.status, ...data });
-    setLoading(false);
+    const dataText = await res.text();
+    let data: any;
+    try {
+      data = JSON.parse(dataText);
+    } catch {
+      data = { raw: dataText };
+    }
 
-    if (res.ok) await loadBlobs(secret.trim());
+    return { httpStatus: res.status, data };
   }
 
-  async function loadBlobs(s: string) {
-    setListLoading(true);
+  async function runBatch() {
+    if (running) return;
+    setRunning(true);
 
-    const res = await fetch("/api/admin/blobs", {
-      headers: { "x-admin-secret": s },
-    });
+    // ارفع واحد وراء الثاني لتجنب ضغط الشبكة + تجنب timeouts
+    for (let i = 0; i < batch.length; i++) {
+      const item = batch[i];
+      if (!item.key) {
+        setBatch((prev) =>
+          prev.map((it, idx) =>
+            idx === i ? { ...it, status: "error", result: { error: "Missing key" } } : it
+          )
+        );
+        continue;
+      }
 
-    const data = await res.json().catch(() => ({}));
-    setListLoading(false);
+      setBatch((prev) =>
+        prev.map((it, idx) => (idx === i ? { ...it, status: "uploading" } : it))
+      );
 
-    if (res.ok && data?.blobs) setBlobs(data.blobs);
+      try {
+        const result = await replaceOne(item);
+        const ok = result.httpStatus >= 200 && result.httpStatus < 300;
+
+        setBatch((prev) =>
+          prev.map((it, idx) =>
+            idx === i
+              ? { ...it, status: ok ? "done" : "error", result }
+              : it
+          )
+        );
+      } catch (e: any) {
+        setBatch((prev) =>
+          prev.map((it, idx) =>
+            idx === i
+              ? { ...it, status: "error", result: { error: String(e?.message ?? e) } }
+              : it
+          )
+        );
+      }
+    }
+
+    await loadBlobs(secret.trim());
+    setRunning(false);
   }
 
-  async function deleteBlob(url: string) {
-    if (!confirm("Delete this file?")) return;
-
-    const res = await fetch("/api/admin/blob-delete", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-secret": secret.trim(),
-      },
-      body: JSON.stringify({ url }),
-    });
-
-    if (res.ok) await loadBlobs(secret.trim());
-    else alert("Delete failed");
-  }
+  const summary = useMemo(() => {
+    const total = batch.length;
+    const done = batch.filter((b) => b.status === "done").length;
+    const err = batch.filter((b) => b.status === "error").length;
+    return { total, done, err };
+  }, [batch]);
 
   if (!ok) {
     return (
@@ -161,50 +227,38 @@ export default function AdminUploadPage() {
   }
 
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-8">
+    <main className="max-w-6xl mx-auto p-6 space-y-8">
       <h1 className="text-2xl font-bold">Admin Library</h1>
 
-      {/* Upload + Replace */}
+      {/* Batch Upload */}
       <section className="p-4 rounded border bg-white space-y-4">
-        <h2 className="font-semibold">Upload / Replace PDF</h2>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h2 className="font-semibold">Upload / Replace PDFs (Batch)</h2>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={deleteOld}
+              onChange={(e) => setDeleteOld(e.target.checked)}
+            />
+            Delete old versions (UI flag)
+          </label>
+        </div>
 
         <div className="flex items-center gap-3 flex-wrap">
           <input
             type="file"
             accept="application/pdf"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            multiple
+            onChange={(e) => onPickFiles(e.target.files)}
           />
-
-          <input
-            className="border rounded px-3 py-2"
-            placeholder="key (e.g. fcom_787)"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-          />
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={prune}
-              onChange={(e) => setPrune(e.target.checked)}
-            />
-            Delete old versions
-          </label>
 
           <button
-            onClick={replace}
-            disabled={!file || !key.trim() || loading}
+            onClick={runBatch}
+            disabled={running || batch.length === 0}
             className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
           >
-            {loading ? "Replacing..." : "Replace (by key)"}
-          </button>
-
-          <button
-            onClick={upload}
-            disabled={!file || loading}
-            className="px-4 py-2 rounded border disabled:opacity-50"
-          >
-            {loading ? "Uploading..." : "Upload (one-off)"}
+            {running ? `Uploading... (${summary.done}/${summary.total})` : "Start Batch Replace"}
           </button>
 
           <button
@@ -216,19 +270,65 @@ export default function AdminUploadPage() {
           </button>
         </div>
 
-        {resData && (
-          <pre className="p-3 rounded bg-gray-100 text-sm overflow-auto">
-            {JSON.stringify(resData, null, 2)}
-          </pre>
+        {batch.length > 0 && (
+          <div className="border rounded">
+            <div className="grid grid-cols-12 gap-2 p-2 text-xs font-semibold bg-gray-50">
+              <div className="col-span-5">File</div>
+              <div className="col-span-3">Key</div>
+              <div className="col-span-2">Status</div>
+              <div className="col-span-2">Result</div>
+            </div>
+
+            {batch.map((b, idx) => (
+              <div key={idx} className="grid grid-cols-12 gap-2 p-2 border-t text-sm items-center">
+                <div className="col-span-5 truncate" title={b.file.name}>
+                  {b.file.name}
+                </div>
+
+                <div className="col-span-3">
+                  <input
+                    className="w-full border rounded px-2 py-1"
+                    value={b.key}
+                    onChange={(e) => updateKey(idx, e.target.value)}
+                    placeholder="e.g. fcom_787"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  {b.status === "idle" && "Ready"}
+                  {b.status === "uploading" && "Uploading..."}
+                  {b.status === "done" && "Done"}
+                  {b.status === "error" && "Error"}
+                </div>
+
+                <div className="col-span-2">
+                  {b.result ? (
+                    <span className="text-xs">
+                      {b.result?.data?.data?.ok || b.result?.data?.ok ? "OK" : "View"}
+                    </span>
+                  ) : (
+                    "-"
+                  )}
+                </div>
+
+                {b.result && (
+                  <div className="col-span-12">
+                    <pre className="p-2 rounded bg-gray-100 text-xs overflow-auto">
+                      {JSON.stringify(b.result, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </section>
 
-      {/* List */}
+      {/* Files list */}
       <section className="p-4 rounded border bg-white space-y-4">
         <h2 className="font-semibold">Files</h2>
 
         {listLoading && <p className="text-sm text-gray-600">Loading...</p>}
-
         {!listLoading && blobs.length === 0 && (
           <p className="text-sm text-gray-600">No files yet.</p>
         )}
@@ -251,7 +351,19 @@ export default function AdminUploadPage() {
               </div>
 
               <button
-                onClick={() => deleteBlob(b.url)}
+                onClick={async () => {
+                  if (!confirm("Delete this file?")) return;
+                  const res = await fetch("/api/admin/blob-delete", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "x-admin-secret": secret.trim(),
+                    },
+                    body: JSON.stringify({ url: b.url }),
+                  });
+                  if (res.ok) await loadBlobs(secret.trim());
+                  else alert("Delete failed");
+                }}
                 className="px-3 py-2 rounded border"
               >
                 Delete
