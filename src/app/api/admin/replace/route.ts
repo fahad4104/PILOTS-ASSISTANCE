@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { put } from "@vercel/blob";
 import { getOpenAI } from "@/lib/openai";
 
 export const runtime = "nodejs";
@@ -29,13 +28,15 @@ function safeKey(input: string) {
   return k;
 }
 
-async function toNodeFileFromBlobUrl(url: string, filename: string) {
-  const r = await fetch(url);
+async function toNodeFileFromBlobUrl(blobUrl: string, filename: string) {
+  const r = await fetch(blobUrl, { cache: "no-store" });
   if (!r.ok) throw new Error(`Failed to fetch blob url: ${r.status}`);
   const buf = Buffer.from(await r.arrayBuffer());
   return new File([buf], filename, { type: "application/pdf" });
 }
 
+// POST /api/admin/replace
+// body: { key: string, blobUrl: string, deleteOldVersions?: boolean }
 export async function POST(req: Request) {
   const auth = assertAdmin(req);
   if (!auth.ok) return auth.res;
@@ -43,31 +44,17 @@ export async function POST(req: Request) {
   const vectorStoreId = (process.env.VECTOR_STORE_ID || "").trim();
   if (!vectorStoreId) {
     return NextResponse.json(
-      {
-        error: "Replace+Index failed",
-        details:
-          "VECTOR_STORE_ID missing in this route. Restart dev server after editing .env.local.",
-      },
+      { error: "VECTOR_STORE_ID missing" },
       { status: 500 }
     );
   }
-
-  const blobToken = (process.env.BLOB_READ_WRITE_TOKEN || "").trim();
-  if (!blobToken) {
-    return NextResponse.json(
-      { error: "Replace+Index failed", details: "BLOB_READ_WRITE_TOKEN missing" },
-      { status: 500 }
-    );
-  }
-
-  // ✅ مهم: أنشئ OpenAI client داخل الـ handler (بعد فحص الـ env)
-  const openai = getOpenAI();
 
   try {
-    const form = await req.formData();
-    const file = form.get("file") as File | null;
-    const keyRaw = String(form.get("key") ?? "");
+    const body = await req.json().catch(() => ({} as any));
+    const keyRaw = String(body?.key ?? "");
     const key = safeKey(keyRaw);
+    const blobUrl = String(body?.blobUrl ?? "").trim();
+    const deleteOldVersions = Boolean(body?.deleteOldVersions ?? true);
 
     if (!key) {
       return NextResponse.json(
@@ -75,114 +62,68 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (!file) return NextResponse.json({ error: "No file provided" }, { status: 400 });
-    if (file.type !== "application/pdf") {
-      return NextResponse.json({ error: "Only PDF allowed" }, { status: 400 });
+    if (!blobUrl || !/^https?:\/\//i.test(blobUrl)) {
+      return NextResponse.json(
+        { error: "Missing/invalid blobUrl" },
+        { status: 400 }
+      );
     }
 
-    // 1) Upload to Vercel Blob
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const pathname = `manuals/${key}/${stamp}.pdf`;
+    const openai = getOpenAI();
 
-    const blob = await put(pathname, file, {
-      access: "public",
-      token: blobToken,
-    });
+    // 1) Upload to OpenAI Files (server fetches from Blob URL)
+    const nodeFile = await toNodeFileFromBlobUrl(blobUrl, `${key}.pdf`);
+    const openaiFile = await openai.files.create({
+      file: nodeFile as any,
+      purpose: "assistants",
+    } as any);
 
-    const stableUrl = `/api/files/${key}.pdf`;
-
-    // 2) Upload to OpenAI Files
-    let openaiFileId: string | null = null;
-    try {
-      const nodeFile = await toNodeFileFromBlobUrl(blob.url, `${key}.pdf`);
-      const openaiFile = await openai.files.create({
-        file: nodeFile as any,
-        purpose: "assistants",
-      } as any);
-
-      openaiFileId = (openaiFile as any)?.id ?? null;
-
-      if (!openaiFileId) {
-        return NextResponse.json(
-          {
-            error: "Replace+Index failed",
-            details: "openai.files.create succeeded but returned no file id",
-            debug: { vectorStoreId, blobUrl: blob.url },
-          },
-          { status: 500 }
-        );
-      }
-    } catch (e: any) {
+    const openaiFileId = (openaiFile as any)?.id ?? null;
+    if (!openaiFileId) {
       return NextResponse.json(
-        {
-          error: "Replace+Index failed",
-          details: "OpenAI files.create failed",
-          debug: {
-            vectorStoreId,
-            blobUrl: blob.url,
-            message: String(e?.message ?? e),
-          },
-        },
+        { error: "OpenAI files.create returned no id" },
         { status: 500 }
       );
     }
 
-    // 3) Attach to Vector Store (start indexing)
-    let vsFile: any = null;
-    let vectorStoreFileId: string | null = null;
-
-    try {
-      vsFile = await (openai as any).vectorStores.files.create(vectorStoreId, {
+    // 2) Attach to Vector Store (start indexing)
+    const vsFile = await (openai as any).vectorStores.files.create(
+      vectorStoreId,
+      {
         file_id: openaiFileId,
         attributes: {
           key,
-          blob_url: blob.url,
-          blob_path: blob.pathname,
+          blob_url: blobUrl,
         },
-      });
-
-      vectorStoreFileId = vsFile?.id ?? null;
-
-      if (!vectorStoreFileId) {
-        return NextResponse.json(
-          {
-            error: "Replace+Index failed",
-            details: "vectorStores.files.create returned no id",
-            debug: { vectorStoreId, openaiFileId, vsFile },
-          },
-          { status: 500 }
-        );
       }
-    } catch (e: any) {
+    );
+
+    const vectorStoreFileId = vsFile?.id ?? null;
+    if (!vectorStoreFileId) {
       return NextResponse.json(
-        {
-          error: "Replace+Index failed",
-          details: "OpenAI vectorStores.files.create failed",
-          debug: {
-            vectorStoreId,
-            openaiFileId,
-            message: String(e?.message ?? e),
-          },
-        },
+        { error: "vectorStores.files.create returned no id", vsFile },
         { status: 500 }
       );
     }
 
-    // ✅ لا نحذف ولا نعمل list هنا حالياً
+    // 3) Optional: delete older versions for same key (keep latest)
+    // ملاحظة: هذا يعتمد على أنك خزّنت key داخل attributes.
+    // لو تحب نفعّل حذف النسخ القديمة بشكل مضبوط 100% نضيف list+filter هنا.
+    // الآن نخليه بسيط (بدون حذف) لتجنب أي لخبطة:
+    // if (deleteOldVersions) { ... }
+
     return NextResponse.json({
       ok: true,
       indexed: "started",
       key,
-      stableUrl,
-      newBlobUrl: blob.url,
-      blobPathname: blob.pathname,
+      blobUrl,
       openai_file_id: openaiFileId,
       vector_store_file_id: vectorStoreFileId,
-      debug_vsfile: vsFile, // مؤقتاً
+      deleteOldVersions,
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: "Replace+Index failed", details: String(err?.message ?? err) },
+      { error: "Replace failed", details: String(err?.message ?? err) },
       { status: 500 }
     );
   }
