@@ -2,194 +2,186 @@
 
 import { useMemo, useState } from "react";
 
-type Result = any;
+type Json = any;
+
+function tryParseJson(text: string): { ok: true; data: any } | { ok: false; raw: string } {
+  if (!text) return { ok: true, data: {} };
+  try {
+    return { ok: true, data: JSON.parse(text) };
+  } catch {
+    return { ok: false, raw: text };
+  }
+}
 
 export default function AdminUploadPage() {
-  const [secret, setSecret] = useState("");
-  const [key, setKey] = useState("");
+  const [adminSecret, setAdminSecret] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [key, setKey] = useState("fcom_787");
   const [deleteOld, setDeleteOld] = useState(true);
 
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<Result>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Json>(null);
 
   const canSubmit = useMemo(() => {
-    return Boolean(secret.trim() && key.trim() && file);
-  }, [secret, key, file]);
+    return adminSecret.trim().length > 0 && !!file && key.trim().length > 0;
+  }, [adminSecret, file, key]);
 
-  async function uploadAndReplace() {
-    setLoading(true);
+  async function safeFetchJson(url: string, init: RequestInit) {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    const parsed = tryParseJson(text);
+
+    if (!parsed.ok) {
+      // Non-JSON response (e.g., "Request Entity Too Large", HTML error page, etc.)
+      return {
+        ok: false,
+        status: res.status,
+        nonJson: true,
+        raw: parsed.raw.slice(0, 1200),
+      };
+    }
+
+    return {
+      ok: res.ok && parsed.data?.ok !== false,
+      status: res.status,
+      data: parsed.data,
+    };
+  }
+
+  async function replaceAndIndex() {
+    setBusy(true);
     setResult(null);
 
     try {
-      // 1) Upload to Blob via your upload route (multipart)
+      // 1) Upload file -> Vercel Blob (multipart/form-data)
       const fd = new FormData();
       fd.append("file", file as File);
       fd.append("key", key.trim());
-      fd.append("deleteOldVersions", String(deleteOld));
+      fd.append("deleteOldVersions", deleteOld ? "true" : "false");
 
-      const up = await fetch("/api/admin/upload", {
+      const up = await safeFetchJson("/api/admin/upload", {
         method: "POST",
         headers: {
-          "x-admin-secret": secret.trim(),
+          "x-admin-secret": adminSecret.trim(),
         },
         body: fd,
       });
 
-      const upText = await up.text();
-      const upJson = upText ? JSON.parse(upText) : {};
-
-      if (!up.ok || upJson?.ok === false) {
-        setResult({ step: "upload", status: up.status, data: upJson });
-        setLoading(false);
-        return;
-      }
-
-      const blobUrl =
-        upJson?.newBlobUrl || upJson?.blobUrl || upJson?.url || "";
-      if (!blobUrl) {
+      if (!up.ok) {
         setResult({
           step: "upload",
-          status: up.status,
-          error: "Upload succeeded but no blob url returned",
-          data: upJson,
+          ...up,
         });
-        setLoading(false);
         return;
       }
 
-      // 2) Call replace route using JSON (no PDF in this request)
-      const rep = await fetch("/api/admin/replace", {
+      const newBlobUrl = up.data?.newBlobUrl || up.data?.url;
+      if (!newBlobUrl) {
+        setResult({
+          step: "upload",
+          error: "Upload succeeded but newBlobUrl missing",
+          debug: up.data,
+        });
+        return;
+      }
+
+      // 2) Replace+Index -> send JSON only (no file!)
+      const rep = await safeFetchJson("/api/admin/replace", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-secret": secret.trim(),
+          "x-admin-secret": adminSecret.trim(),
         },
         body: JSON.stringify({
           key: key.trim(),
-          blobUrl,
+          blobUrl: newBlobUrl,
           deleteOldVersions: deleteOld,
         }),
       });
 
-      const repText = await rep.text();
-      const repJson = repText ? JSON.parse(repText) : {};
+      if (!rep.ok) {
+        setResult({
+          step: "replace",
+          upload: up.data,
+          ...rep,
+        });
+        return;
+      }
 
       setResult({
-        step: "replace",
-        upload: upJson,
-        replace: { status: rep.status, data: repJson },
+        ok: true,
+        step: "done",
+        upload: up.data,
+        replace: rep.data,
       });
     } catch (e: any) {
-      setResult({ error: String(e?.message ?? e) });
+      setResult({ ok: false, error: String(e?.message ?? e) });
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
-    <main style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700 }}>Admin Library</h1>
+    <main className="max-w-3xl mx-auto p-6 space-y-6">
+      <h1 className="text-3xl font-bold">Admin Library</h1>
 
-      <section
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: 12,
-          padding: 16,
-          marginTop: 16,
-        }}
-      >
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>
-          Replace PDF (Single File)
-        </h2>
+      <section className="border rounded p-4 space-y-4 bg-white">
+        <h2 className="text-lg font-semibold">Replace PDF (Single File)</h2>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", marginBottom: 6 }}>
-            Admin Secret
-          </label>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Admin Secret</label>
           <input
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
             type="password"
-            style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 8,
-              border: "1px solid #ccc",
-            }}
+            value={adminSecret}
+            onChange={(e) => setAdminSecret(e.target.value)}
+            className="w-full border rounded px-3 py-2"
+            placeholder="Enter ADMIN_SECRET"
           />
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", marginBottom: 6 }}>
-            Choose File (PDF)
-          </label>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Choose File (PDF)</label>
           <input
             type="file"
             accept="application/pdf"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
           {file && (
-            <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
+            <div className="text-sm text-gray-600">
               Selected: {file.name} ({Math.round(file.size / 1024)} KB)
             </div>
           )}
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", marginBottom: 6 }}>
-            Key (e.g. fcom_787 / fctm / qrh_777)
-          </label>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Key (e.g. fcom_787 / fctm / qrh_777)</label>
           <input
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder="fctm"
-            style={{
-              width: 320,
-              padding: 10,
-              borderRadius: 8,
-              border: "1px solid #ccc",
-            }}
+            className="w-full max-w-xs border rounded px-3 py-2"
+            placeholder="fcom_787"
           />
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={deleteOld}
-              onChange={(e) => setDeleteOld(e.target.checked)}
-            />
-            Delete old versions (optional)
-          </label>
-        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={deleteOld}
+            onChange={(e) => setDeleteOld(e.target.checked)}
+          />
+          Delete old versions (optional)
+        </label>
 
         <button
-          onClick={uploadAndReplace}
-          disabled={!canSubmit || loading}
-          style={{
-            marginTop: 14,
-            background: "black",
-            color: "white",
-            borderRadius: 10,
-            padding: "10px 16px",
-            opacity: !canSubmit || loading ? 0.5 : 1,
-          }}
+          onClick={replaceAndIndex}
+          disabled={!canSubmit || busy}
+          className="px-5 py-2 rounded bg-black text-white disabled:opacity-50"
         >
-          {loading ? "Working..." : "Replace & Index"}
+          {busy ? "Working..." : "Replace & Index"}
         </button>
 
-        <div style={{ marginTop: 14 }}>
-          <pre
-            style={{
-              background: "#f6f6f6",
-              padding: 12,
-              borderRadius: 10,
-              overflow: "auto",
-            }}
-          >
-            {result ? JSON.stringify(result, null, 2) : "{\n  \n}"}
-          </pre>
+        <div className="border rounded p-3 bg-gray-50">
+          <pre className="text-xs overflow-auto">{JSON.stringify(result ?? {}, null, 2)}</pre>
         </div>
       </section>
     </main>
