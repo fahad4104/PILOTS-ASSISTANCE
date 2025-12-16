@@ -26,29 +26,31 @@ export async function POST(req: Request) {
   const auth = assertAdmin(req);
   if (!auth.ok) return auth.res;
 
-  const body = (await req.json()) as HandleUploadBody;
-
   try {
+    const body = (await req.json()) as HandleUploadBody;
+
+    // Direct upload token generator
     const json = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async (_pathname) => {
+      onBeforeGenerateToken: async (pathname) => {
+        // مسموح PDF فقط + حجم كبير (عدّل كما تريد)
         return {
           allowedContentTypes: ["application/pdf"],
-          maximumSizeInBytes: 200 * 1024 * 1024, // 200MB
-          tokenPayload: null, // ✅ لازم string أو null (مو object)
-          // callbackUrl: process.env.VERCEL_BLOB_CALLBACK_URL, // اختياري فقط إذا تحتاج onUploadCompleted محلياً
+          maximumSizeInBytes: 250 * 1024 * 1024, // 250MB
+          // لازم تكون string حسب typings
+          tokenPayload: JSON.stringify({ pathname }),
         };
       },
       onUploadCompleted: async () => {
-        // فاضي - لأننا نسوي indexing بعد الرفع عبر /api/admin/replace
+        // لا شيء هنا (نحن نعمل indexing في /api/admin/replace)
       },
     });
 
     return NextResponse.json(json);
   } catch (e: any) {
     return NextResponse.json(
-      { error: "blob token failed", details: String(e?.message ?? e) },
+      { error: "blob-upload-token failed", details: String(e?.message ?? e) },
       { status: 500 }
     );
   }
