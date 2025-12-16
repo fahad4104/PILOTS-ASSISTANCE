@@ -7,7 +7,6 @@ type BlobItem = {
   pathname: string;
   size: number;
   uploadedAt?: string;
-  contentType?: string;
 };
 
 export default function AdminUploadPage() {
@@ -15,83 +14,58 @@ export default function AdminUploadPage() {
 
   const [adminSecret, setAdminSecret] = useState("");
 
-  // Upload (replace/index) inputs
+  // Upload state
   const [file, setFile] = useState<File | null>(null);
-  const [key, setKey] = useState("");
+  const [key, setKey] = useState("fcom_787");
   const [deleteOld, setDeleteOld] = useState(true);
-
-  // Upload result
-  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
 
   // Library state
+  const [prefix, setPrefix] = useState("manuals/");
+  const [items, setItems] = useState<BlobItem[]>([]);
   const [libBusy, setLibBusy] = useState(false);
-  const [blobs, setBlobs] = useState<BlobItem[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [libError, setLibError] = useState<string | null>(null);
+  const [libErr, setLibErr] = useState<string | null>(null);
 
-  const prefix = "manuals/";
-
-  const canReplace = useMemo(() => {
-    return adminSecret.trim() && file && key.trim();
-  }, [adminSecret, file, key]);
+  const canAdmin = useMemo(() => adminSecret.trim().length > 0, [adminSecret]);
 
   async function replaceAndIndex() {
     setBusy(true);
     setResult(null);
 
     try {
-      // 1) Get client upload token (optional if you already implemented it)
-      // If you do not use blob-upload-token flow, remove this block and keep your existing flow.
-      const tokenRes = await fetch("/api/admin/blob-upload-token", {
+      if (!canAdmin) throw new Error("Admin secret required");
+      if (!file) throw new Error("Please choose a PDF file");
+
+      // 1) ارفع الملف الى blob عبر endpoint عندك
+      const fd = new FormData();
+      fd.append("file", file);
+
+      const up = await fetch("/api/admin/upload", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-secret": adminSecret.trim(),
-        },
-        body: JSON.stringify({}),
+        headers: { "x-admin-secret": adminSecret.trim() },
+        body: fd,
       });
 
-      const tokenText = await tokenRes.text();
-      const tokenData = tokenText ? JSON.parse(tokenText) : {};
-      if (!tokenRes.ok || tokenData?.error) {
-        setResult({ step: "token", status: tokenRes.status, data: tokenData });
+      const upText = await up.text();
+      let upData: any = {};
+      try {
+        upData = upText ? JSON.parse(upText) : {};
+      } catch {
+        upData = { nonJson: true, raw: upText };
+      }
+
+      if (!up.ok || upData?.ok === false) {
+        setResult({ step: "upload", ok: false, status: up.status, data: upData });
         setBusy(false);
         return;
       }
 
-      // 2) Upload to Vercel Blob using your existing /api/blob-upload endpoint OR direct upload flow
-      // NOTE: If you already have a working endpoint for uploading file to Blob, use it instead.
-      // Here is a simple call to your existing upload endpoint (formData):
-      const form = new FormData();
-      form.append("file", file as File);
+      const blobUrl = upData?.url;
+      if (!blobUrl) throw new Error("Upload returned no url");
 
-      const uploadRes = await fetch("/api/blob-upload", {
-        method: "POST",
-        headers: {
-          "x-admin-secret": adminSecret.trim(),
-        },
-        body: form,
-      });
-
-      const uploadText = await uploadRes.text();
-      const uploadData = uploadText ? JSON.parse(uploadText) : {};
-      if (!uploadRes.ok || uploadData?.error) {
-        setResult({
-          step: "upload",
-          status: uploadRes.status,
-          data: uploadData,
-          nonJson: false,
-        });
-        setBusy(false);
-        return;
-      }
-
-      const blobUrl: string = uploadData.url;
-
-      // 3) Call your replace/index endpoint (expects JSON)
-      const indexRes = await fetch("/api/admin/replace", {
+      // 2) بعدها index/replace عبر endpoint عندك
+      const rep = await fetch("/api/admin/replace", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -104,63 +78,109 @@ export default function AdminUploadPage() {
         }),
       });
 
-      const indexText = await indexRes.text();
-      const indexData = indexText ? JSON.parse(indexText) : {};
-      setResult({ step: "index", status: indexRes.status, data: indexData });
+      const repText = await rep.text();
+      let repData: any = {};
+      try {
+        repData = repText ? JSON.parse(repText) : {};
+      } catch {
+        repData = { nonJson: true, raw: repText };
+      }
+
+      setResult({
+        step: "index",
+        ok: rep.ok && repData?.ok !== false,
+        status: rep.status,
+        data: repData,
+        blob: {
+          url: upData?.url,
+          pathname: upData?.pathname,
+          size: upData?.size,
+        },
+      });
+
+      // تحديث المكتبة بعد نجاح الرفع
+      if (rep.ok) {
+        await refreshLibrary();
+        setTab("library");
+      }
     } catch (e: any) {
-      setResult({ error: String(e?.message ?? e) });
+      setResult({ step: "client", ok: false, error: String(e?.message ?? e) });
     } finally {
       setBusy(false);
     }
   }
 
-  async function loadLibrary(nextCursor?: string | null) {
+  async function refreshLibrary() {
     setLibBusy(true);
-    setLibError(null);
-
+    setLibErr(null);
     try {
-      const url = new URL("/api/admin/blobs", window.location.origin);
-      url.searchParams.set("prefix", prefix);
-      if (nextCursor) url.searchParams.set("cursor", nextCursor);
+      if (!canAdmin) throw new Error("Admin secret required");
 
-      const res = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          "x-admin-secret": adminSecret.trim(),
-        },
+      const res = await fetch(`/api/admin/blobs?prefix=${encodeURIComponent(prefix)}`, {
+        headers: { "x-admin-secret": adminSecret.trim() },
       });
-
       const text = await res.text();
-      const data = text ? JSON.parse(text) : {};
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { nonJson: true, raw: text };
+      }
 
       if (!res.ok || data?.ok === false) {
-        setLibError(data?.error || "Failed to load library");
-        setLibBusy(false);
-        return;
+        throw new Error(data?.error || `List failed (${res.status})`);
       }
 
-      const newItems: BlobItem[] = Array.isArray(data?.blobs) ? data.blobs : [];
-      if (nextCursor) {
-        // pagination append
-        setBlobs((prev) => [...prev, ...newItems]);
-      } else {
-        // first page
-        setBlobs(newItems);
-      }
-
-      setCursor(data?.cursor ?? null);
-      setHasMore(!!data?.hasMore);
+      setItems(Array.isArray(data?.blobs) ? data.blobs : []);
     } catch (e: any) {
-      setLibError(String(e?.message ?? e));
+      setLibErr(String(e?.message ?? e));
+      setItems([]);
     } finally {
       setLibBusy(false);
     }
   }
 
-  // auto-load library when user opens Library tab (if secret موجود)
+  async function deleteBlob(it: BlobItem) {
+    if (!canAdmin) return;
+
+    const ok = confirm(`Delete this file?\n\n${it.pathname}`);
+    if (!ok) return;
+
+    try {
+      setLibBusy(true);
+      const res = await fetch("/api/admin/blob-delete", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": adminSecret.trim(),
+        },
+        body: JSON.stringify({ url: it.url, pathname: it.pathname }),
+      });
+
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { nonJson: true, raw: text };
+      }
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || `Delete failed (${res.status})`);
+      }
+
+      // تحديث القائمة محلياً بسرعة
+      setItems((prev) => prev.filter((x) => x.pathname !== it.pathname));
+    } catch (e: any) {
+      alert(String(e?.message ?? e));
+    } finally {
+      setLibBusy(false);
+    }
+  }
+
   useEffect(() => {
-    if (tab === "library" && adminSecret.trim()) {
-      loadLibrary(null);
+    if (tab === "library" && canAdmin) {
+      refreshLibrary();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
@@ -169,35 +189,35 @@ export default function AdminUploadPage() {
     <main className="max-w-4xl mx-auto p-6 space-y-6">
       <h1 className="text-3xl font-bold">Admin Library</h1>
 
-      <div className="flex items-center gap-2">
+      <div className="flex gap-2">
         <button
-          className={`px-4 py-2 rounded border ${tab === "upload" ? "bg-black text-white" : "bg-white"}`}
+          className={`px-4 py-2 border rounded ${tab === "upload" ? "bg-black text-white" : ""}`}
           onClick={() => setTab("upload")}
         >
           Upload PDF
         </button>
         <button
-          className={`px-4 py-2 rounded border ${tab === "library" ? "bg-black text-white" : "bg-white"}`}
+          className={`px-4 py-2 border rounded ${tab === "library" ? "bg-black text-white" : ""}`}
           onClick={() => setTab("library")}
         >
           Library
         </button>
       </div>
 
-      <section className="border rounded p-4 bg-white space-y-3">
+      <div className="border rounded p-4 space-y-2">
         <label className="block text-sm font-medium">Admin Secret</label>
         <input
           type="password"
           className="w-full border rounded p-2"
           value={adminSecret}
           onChange={(e) => setAdminSecret(e.target.value)}
-          placeholder="Enter ADMIN_SECRET"
+          placeholder="Enter admin secret"
         />
-      </section>
+      </div>
 
       {tab === "upload" && (
-        <section className="border rounded p-4 bg-white space-y-4">
-          <h2 className="text-lg font-semibold">Replace PDF (Single File)</h2>
+        <section className="border rounded p-4 space-y-4">
+          <h2 className="text-xl font-semibold">Replace PDF (Single File)</h2>
 
           <div className="space-y-2">
             <label className="block text-sm font-medium">Choose File (PDF)</label>
@@ -206,7 +226,11 @@ export default function AdminUploadPage() {
               accept="application/pdf"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
-            {file && <div className="text-sm text-gray-600">Selected: {file.name} ({Math.round(file.size / 1024)} KB)</div>}
+            {file && (
+              <div className="text-sm text-gray-600">
+                Selected: {file.name} ({Math.round(file.size / 1024)} KB)
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -215,19 +239,22 @@ export default function AdminUploadPage() {
               className="w-full border rounded p-2"
               value={key}
               onChange={(e) => setKey(e.target.value)}
-              placeholder="fcom_787"
             />
           </div>
 
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={deleteOld} onChange={(e) => setDeleteOld(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={deleteOld}
+              onChange={(e) => setDeleteOld(e.target.checked)}
+            />
             Delete old versions (optional)
           </label>
 
           <button
-            onClick={replaceAndIndex}
-            disabled={busy || !canReplace}
             className="px-5 py-2 rounded bg-black text-white disabled:opacity-50"
+            onClick={replaceAndIndex}
+            disabled={busy || !canAdmin || !file || !key.trim()}
           >
             {busy ? "Working..." : "Replace & Index"}
           </button>
@@ -239,68 +266,67 @@ export default function AdminUploadPage() {
       )}
 
       {tab === "library" && (
-        <section className="border rounded p-4 bg-white space-y-4">
+        <section className="border rounded p-4 space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2 className="text-lg font-semibold">Library ({prefix})</h2>
-
-            <div className="flex items-center gap-2">
-              <button
-                className="px-4 py-2 rounded border"
-                onClick={() => {
-                  setBlobs([]);
-                  setCursor(null);
-                  setHasMore(false);
-                  loadLibrary(null);
-                }}
-                disabled={libBusy || !adminSecret.trim()}
-              >
-                {libBusy ? "Loading..." : "Refresh"}
-              </button>
-
-              {hasMore && (
-                <button
-                  className="px-4 py-2 rounded border"
-                  onClick={() => loadLibrary(cursor)}
-                  disabled={libBusy}
-                >
-                  Next
-                </button>
-              )}
-            </div>
+            <h2 className="text-xl font-semibold">Library ({prefix})</h2>
+            <button
+              className="px-4 py-2 border rounded"
+              onClick={refreshLibrary}
+              disabled={libBusy || !canAdmin}
+            >
+              {libBusy ? "Loading..." : "Refresh"}
+            </button>
           </div>
 
-          {!adminSecret.trim() && (
-            <div className="text-sm text-gray-600">Enter Admin Secret to load the library.</div>
-          )}
+          <div className="flex gap-2 items-end flex-wrap">
+            <div className="space-y-1">
+              <label className="block text-sm font-medium">Prefix</label>
+              <input
+                className="border rounded p-2 w-[260px]"
+                value={prefix}
+                onChange={(e) => setPrefix(e.target.value)}
+              />
+            </div>
+            <button
+              className="px-4 py-2 border rounded"
+              onClick={refreshLibrary}
+              disabled={libBusy || !canAdmin}
+            >
+              Apply
+            </button>
+          </div>
 
-          {libError && (
-            <div className="text-sm text-red-600">{libError}</div>
-          )}
+          {libErr && <div className="text-sm text-red-600">{libErr}</div>}
 
-          {adminSecret.trim() && !libBusy && blobs.length === 0 && !libError && (
-            <div className="text-sm text-gray-600">No files found under {prefix}</div>
-          )}
+          {items.length === 0 ? (
+            <div className="text-sm text-gray-600">No files found.</div>
+          ) : (
+            <div className="space-y-3">
+              {items.map((it) => (
+                <div key={it.pathname} className="border rounded p-3">
+                  <div className="font-medium">{it.pathname}</div>
+                  <div className="text-sm text-gray-600">
+                    Size: {Math.round(it.size / 1024)} KB
+                    {it.uploadedAt ? ` • Uploaded: ${new Date(it.uploadedAt).toLocaleString()}` : ""}
+                  </div>
 
-          <ul className="space-y-2">
-            {blobs.map((b) => (
-              <li key={b.pathname} className="border rounded p-3">
-                <div className="font-medium break-all">{b.pathname}</div>
-                <div className="text-sm text-gray-700">
-                  Size: {Math.round((b.size ?? 0) / 1024)} KB
-                  {b.uploadedAt ? ` • Uploaded: ${new Date(b.uploadedAt).toLocaleString()}` : ""}
-                  {b.contentType ? ` • ${b.contentType}` : ""}
+                  <div className="flex gap-3 mt-2">
+                    <a className="underline text-sm" href={it.url} target="_blank" rel="noreferrer">
+                      Open
+                    </a>
+
+                    <button
+                      className="text-sm underline"
+                      onClick={() => deleteBlob(it)}
+                      disabled={libBusy || !canAdmin}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
-                <a
-                  href={b.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm underline break-all"
-                >
-                  Open
-                </a>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          )}
         </section>
       )}
     </main>

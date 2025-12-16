@@ -22,27 +22,29 @@ function assertAdmin(req: Request) {
   return { ok: true as const };
 }
 
-export async function POST(req: Request) {
+// DELETE /api/admin/blob-delete  body: { url?: string; pathname?: string }
+export async function DELETE(req: Request) {
   const auth = assertAdmin(req);
   if (!auth.ok) return auth.res;
 
-  const token = (process.env.BLOB_READ_WRITE_TOKEN || "").trim();
-  if (!token) {
-    return NextResponse.json({ error: "BLOB_READ_WRITE_TOKEN missing" }, { status: 500 });
-  }
-
   try {
     const body = await req.json().catch(() => ({}));
-    const urlOrPath = String(body?.url ?? body?.pathname ?? "").trim();
+    const url = (body?.url || "").trim();
+    const pathname = (body?.pathname || "").trim();
 
-    if (!urlOrPath) {
-      return NextResponse.json({ ok: false, error: "Provide url or pathname" }, { status: 400 });
+    if (!url && !pathname) {
+      return NextResponse.json(
+        { ok: false, error: "Provide url or pathname" },
+        { status: 400 }
+      );
     }
 
-    // del يقبل url مباشرة أو pathname
-    await del(urlOrPath, { token });
+    // del() يقبل URL أو pathname حسب نسخة SDK — نمرر الموجود
+    await del((url || pathname) as any, {
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
 
-    return NextResponse.json({ ok: true, deleted: urlOrPath });
+    return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: "Delete failed", details: String(e?.message ?? e) },
