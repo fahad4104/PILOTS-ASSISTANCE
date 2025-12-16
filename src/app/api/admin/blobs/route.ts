@@ -22,38 +22,39 @@ function assertAdmin(req: Request) {
   return { ok: true as const };
 }
 
+// GET /api/admin/blobs?prefix=manuals/&cursor=...
 export async function GET(req: Request) {
   const auth = assertAdmin(req);
   if (!auth.ok) return auth.res;
 
-  const token = (process.env.BLOB_READ_WRITE_TOKEN || "").trim();
-  if (!token) {
-    return NextResponse.json({ error: "BLOB_READ_WRITE_TOKEN missing" }, { status: 500 });
-  }
-
-  const url = new URL(req.url);
-  const prefix = (url.searchParams.get("prefix") || "manuals/").trim(); // default: manuals/
-
   try {
+    const { searchParams } = new URL(req.url);
+    const prefix = searchParams.get("prefix") || "manuals/";
+    const cursor = searchParams.get("cursor") || undefined;
+
     const result = await list({
-      token,
       prefix,
-      limit: 1000,
+      cursor,
+      limit: 100,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
-    const items = (result.blobs || []).map((b) => ({
-      pathname: b.pathname,
-      url: b.url,
-      downloadUrl: (b as any).downloadUrl ?? b.url,
-      size: b.size,
-      uploadedAt: (b as any).uploadedAt ?? null,
-      contentType: (b as any).contentType ?? null,
-    }));
-
-    return NextResponse.json({ ok: true, prefix, count: items.length, items });
+    return NextResponse.json({
+      ok: true,
+      prefix,
+      blobs: result.blobs.map((b: any) => ({
+        url: b.url,
+        pathname: b.pathname,
+        size: b.size,
+        uploadedAt: b.uploadedAt,
+        // ملاحظة: بعض نسخ @vercel/blob ما ترجع contentType في list()
+      })),
+      cursor: result.cursor ?? null,
+      hasMore: result.hasMore ?? false,
+    });
   } catch (e: any) {
     return NextResponse.json(
-      { ok: false, error: "List blobs failed", details: String(e?.message ?? e) },
+      { ok: false, error: "List failed", details: String(e?.message ?? e) },
       { status: 500 }
     );
   }

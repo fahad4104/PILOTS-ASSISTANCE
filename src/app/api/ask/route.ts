@@ -60,10 +60,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "VECTOR_STORE_ID missing" }, { status: 500 });
     }
 
-    const system =
-      lang === "ar"
-        ? "أجب فقط من الدليل. إذا لم تجد النص بشكل صريح قل: غير موجود في الدليل. لا تخمّن."
-        : "Answer only using the manual. If not explicitly found, say: Not found in manuals. Do not guess.";
+ const system = `
+You are an aviation technical assistant.
+
+RULES (MANDATORY):
+- Answer ONLY using the provided manuals.
+- If a value is stated conditionally (e.g. "must not be engaged below X"), treat it as a valid limit.
+- Do NOT say "not explicitly stated" if the information is clearly implied by a limitation.
+- Extract the exact numeric value and unit if present.
+- Quote the exact sentence from the manual when possible.
+- If the answer exists, answer directly and confidently.
+- If the answer truly does not exist, reply ONLY: "Not found in manuals."
+
+FORMAT:
+- First line: Direct Answer.
+- Second line: Quoted sentence from the manual.
+- Then: Reference with file name and page number.
+`;
+
 
     const resp = await openai.responses.create({
       model: process.env.ASK_MODEL || "gpt-4o-mini",
