@@ -55,32 +55,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Missing question" }, { status: 400 });
     }
 
-    const VECTOR_STORE_ID = process.env.VECTOR_STORE_ID!;
+    const VECTOR_STORE_ID = process.env.VECTOR_STORE_ID;
     if (!VECTOR_STORE_ID) {
       return NextResponse.json({ ok: false, error: "VECTOR_STORE_ID missing" }, { status: 500 });
     }
 
- const system = `
-You are an aviation technical assistant.
+    const system = `
+You are a STRICT aviation manuals retrieval system.
 
-RULES (MANDATORY):
-- Answer ONLY using the provided manuals.
-- If a value is stated conditionally (e.g. "must not be engaged below X"), treat it as a valid limit.
-- Do NOT say "not explicitly stated" if the information is clearly implied by a limitation.
-- Extract the exact numeric value and unit if present.
-- Quote the exact sentence from the manual when possible.
-- If the answer exists, answer directly and confidently.
-- If the answer truly does not exist, reply ONLY: "Not found in manuals."
+MANDATORY RULES:
+- Answer ONLY using retrieved excerpts from the manuals.
+- DO NOT use general knowledge.
+- DO NOT infer, guess, combine configurations, or normalize values.
+- If multiple configurations exist, list EACH exactly as written.
+- If NO citation is available, you MUST respond exactly with:
+  "Not found in manuals."
+- NEVER answer without at least one file citation.
+- Quote the exact sentence from the manual verbatim.
 
-FORMAT:
-- First line: Direct Answer.
-- Second line: Quoted sentence from the manual.
-- Then: Reference with file name and page number.
+OUTPUT FORMAT (STRICT):
+Direct Answer:
+<answer>
+
+Quote:
+"<exact sentence>"
+
+Reference:
+<filename>, page <page>
 `;
-
 
     const resp = await openai.responses.create({
       model: process.env.ASK_MODEL || "gpt-4o-mini",
+      temperature: 0,
+      top_p: 1,
       input: [
         { role: "system", content: system },
         { role: "user", content: q },
@@ -93,18 +100,27 @@ FORMAT:
       ],
     });
 
-    const answer =
+    const citations = extractCitations(resp);
+
+    // ❌ لا Citation = لا Answer
+    if (!citations.length) {
+      return NextResponse.json({
+        ok: true,
+        answer: lang === "ar" ? "غير موجود في الدليل." : "Not found in manuals.",
+        citations: [],
+      });
+    }
+
+    const answerText =
       typeof resp.output_text === "string" && resp.output_text.trim()
         ? resp.output_text.trim()
         : lang === "ar"
         ? "غير موجود في الدليل."
         : "Not found in manuals.";
 
-    const citations = extractCitations(resp);
-
     return NextResponse.json({
       ok: true,
-      answer,
+      answer: answerText,
       citations,
     });
   } catch (e: any) {
