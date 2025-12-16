@@ -85,20 +85,19 @@ Reference:
 `;
 
     const resp = await openai.responses.create({
-      model: process.env.ASK_MODEL || "gpt-4o-mini",
-      temperature: 0,
-      top_p: 1,
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: q },
-      ],
-      tools: [
-        {
-          type: "file_search",
-          vector_store_ids: [VECTOR_STORE_ID],
-        },
-      ],
-    });
+  model: process.env.ASK_MODEL || "gpt-4o-mini",
+  temperature: 0,
+  top_p: 1,
+  tool_choice: { type: "file_search" },
+  input: [
+    { role: "system", content: system },
+    { role: "user", content: q },
+  ],
+  tools: [
+    { type: "file_search", vector_store_ids: [VECTOR_STORE_ID], max_num_results: 10 },
+  ],
+});
+
 
     const citations = extractCitations(resp);
 
