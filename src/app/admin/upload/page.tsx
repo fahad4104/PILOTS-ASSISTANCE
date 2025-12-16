@@ -47,10 +47,17 @@ export default function AdminUploadPage() {
     setLoadingLib(true);
     setLibError(null);
     try {
-      const res = await fetch(`/api/admin/blobs?prefix=${encodeURIComponent(prefix)}&limit=200`, {
-        method: "GET",
-        cache: "no-store",
-      });
+      const res = await fetch(
+  `/api/admin/blobs?prefix=${encodeURIComponent(prefix)}&limit=200`,
+  {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      "x-admin-secret": adminSecret.trim(),
+    },
+  }
+);
+
 
       const text = await res.text();
       const data = safeJson(text);
