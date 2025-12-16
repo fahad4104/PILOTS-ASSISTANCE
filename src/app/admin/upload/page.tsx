@@ -9,6 +9,14 @@ type BlobItem = {
   uploadedAt?: string | null;
 };
 
+function tryParseJson(text: string) {
+  try {
+    return { ok: true as const, json: JSON.parse(text) };
+  } catch {
+    return { ok: false as const, json: null };
+  }
+}
+
 export default function AdminUploadPage() {
   const [tab, setTab] = useState<"upload" | "library">("upload");
 
@@ -41,7 +49,18 @@ export default function AdminUploadPage() {
 
   // ================= UPLOAD =================
   async function replaceAndIndex() {
-    if (!file || !key || !adminSecret) return;
+    if (!file) {
+      setUploadResult({ error: "No file selected" });
+      return;
+    }
+    if (!key.trim()) {
+      setUploadResult({ error: "Key is required" });
+      return;
+    }
+    if (!adminSecret.trim()) {
+      setUploadResult({ error: "Admin Secret is required" });
+      return;
+    }
 
     setUploading(true);
     setUploadResult(null);
@@ -49,23 +68,29 @@ export default function AdminUploadPage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      form.append("key", key);
+      form.append("key", key.trim());
 
       const res = await fetch("/api/admin/replace", {
         method: "POST",
         headers: {
-          "x-admin-secret": adminSecret,
+          "x-admin-secret": adminSecret.trim(),
         },
         body: form,
       });
 
       const text = await res.text();
-      const data = text ? JSON.parse(text) : {};
+      const ct = res.headers.get("content-type") || "";
+      const parsed = tryParseJson(text);
 
-      setUploadResult({ status: res.status, data });
+      // إذا رجع JSON نعرضه، وإذا رجع نص نعرض النص الخام
+      const payload =
+        ct.includes("application/json") && parsed.ok
+          ? parsed.json
+          : { nonJson: true, raw: text };
 
-      if (res.ok) {
-        // بعد الرفع نحدث المكتبة
+      setUploadResult({ status: res.status, data: payload });
+
+      if (res.ok && !(payload as any)?.nonJson) {
         await loadLibrary();
         setTab("library");
       }
@@ -78,7 +103,7 @@ export default function AdminUploadPage() {
 
   // ================= LIBRARY =================
   async function loadLibrary() {
-    if (!adminSecret) return;
+    if (!adminSecret.trim()) return;
 
     setLoadingList(true);
     setError("");
@@ -88,15 +113,24 @@ export default function AdminUploadPage() {
         `/api/admin/blobs?prefix=${encodeURIComponent(prefix)}`,
         {
           headers: {
-            "x-admin-secret": adminSecret,
+            "x-admin-secret": adminSecret.trim(),
           },
         }
       );
 
       const text = await res.text();
-      const data = text ? JSON.parse(text) : {};
+      const parsed = tryParseJson(text);
 
-      if (!res.ok || data?.ok === false) {
+      if (!res.ok) {
+        setError(
+          parsed.ok ? parsed.json?.error || "Failed to load files" : text
+        );
+        setItems([]);
+        return;
+      }
+
+      const data = parsed.ok ? parsed.json : null;
+      if (!data?.ok) {
         setError(data?.error || "Failed to load files");
         setItems([]);
         return;
@@ -115,33 +149,38 @@ export default function AdminUploadPage() {
     if (!confirm(`Delete this file?\n\n${it.pathname}`)) return;
 
     try {
-      await fetch("/api/admin/blob-delete", {
+      const res = await fetch("/api/admin/blob-delete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-secret": adminSecret,
+          "x-admin-secret": adminSecret.trim(),
         },
         body: JSON.stringify({ url: it.url }),
       });
 
+      if (!res.ok) {
+        const t = await res.text();
+        alert(`Delete failed: ${t}`);
+        return;
+      }
+
       setItems((prev) => prev.filter((x) => x.url !== it.url));
-    } catch (e) {
+    } catch {
       alert("Delete failed");
     }
   }
 
   useEffect(() => {
-    if (tab === "library" && adminSecret) {
+    if (tab === "library" && adminSecret.trim()) {
       loadLibrary();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
 
-  // ================= UI =================
   return (
     <main className="max-w-5xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold">Admin Library</h1>
 
-      {/* Tabs */}
       <div className="flex gap-2">
         <button
           onClick={() => setTab("upload")}
@@ -161,7 +200,6 @@ export default function AdminUploadPage() {
         </button>
       </div>
 
-      {/* Admin Secret */}
       <div className="border rounded p-4 bg-white space-y-2">
         <label className="text-sm font-medium">Admin Secret</label>
         <input
@@ -172,7 +210,6 @@ export default function AdminUploadPage() {
         />
       </div>
 
-      {/* ================= Upload Tab ================= */}
       {tab === "upload" && (
         <section className="border rounded p-4 bg-white space-y-4">
           <h2 className="font-semibold">Replace PDF (Single File)</h2>
@@ -192,7 +229,7 @@ export default function AdminUploadPage() {
 
           <button
             onClick={replaceAndIndex}
-            disabled={uploading || !file || !key || !adminSecret}
+            disabled={uploading || !file || !key.trim() || !adminSecret.trim()}
             className="px-5 py-2 rounded bg-black text-white disabled:opacity-50"
           >
             {uploading ? "Uploading..." : "Replace & Index"}
@@ -206,24 +243,31 @@ export default function AdminUploadPage() {
         </section>
       )}
 
-      {/* ================= Library Tab ================= */}
       {tab === "library" && (
         <section className="border rounded p-4 bg-white space-y-4">
           <h2 className="font-semibold">Stored Files</h2>
 
-          <input
-            className="w-full border rounded px-3 py-2"
-            placeholder="Prefix (default manuals/)"
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-          />
+          <div className="flex gap-2 flex-wrap">
+            <input
+              className="flex-1 min-w-[240px] border rounded px-3 py-2"
+              placeholder="Prefix (default manuals/)"
+              value={prefix}
+              onChange={(e) => setPrefix(e.target.value)}
+            />
+            <button
+              onClick={loadLibrary}
+              disabled={!adminSecret.trim() || loadingList}
+              className="px-4 py-2 rounded border bg-black text-white disabled:opacity-50"
+            >
+              {loadingList ? "Loading..." : "Refresh"}
+            </button>
+          </div>
 
           <div className="text-sm">
             Files: <b>{items.length}</b> • Total size:{" "}
             <b>{formatBytes(totalSize)}</b>
           </div>
 
-          {loadingList && <div>Loading…</div>}
           {error && <div className="text-red-600">{error}</div>}
 
           {items.length === 0 ? (
@@ -243,11 +287,7 @@ export default function AdminUploadPage() {
                     <td className="p-2 break-all">{it.pathname}</td>
                     <td className="p-2">{formatBytes(it.size)}</td>
                     <td className="p-2 flex gap-3">
-                      <a
-                        href={it.url}
-                        target="_blank"
-                        className="underline"
-                      >
+                      <a href={it.url} target="_blank" className="underline">
                         Open
                       </a>
                       <button
