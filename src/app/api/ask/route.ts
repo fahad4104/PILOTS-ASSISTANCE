@@ -14,6 +14,7 @@ type Citation = {
   file_id?: string;
   index?: number;
   page?: number;
+  quote?: string;
 };
 
 function extractCitations(resp: any): Citation[] {
@@ -22,23 +23,40 @@ function extractCitations(resp: any): Citation[] {
 
   for (const item of output) {
     const content = Array.isArray(item?.content) ? item.content : [];
-    for (const c of content) {
-      const anns = Array.isArray(c?.annotations) ? c.annotations : [];
-      for (const a of anns) {
-        if (a.type === "file_citation") {
-          const filename = a.filename;
-          const file_id = a.file_id;
-          const index = typeof a.index === "number" ? a.index : undefined;
-          const page = mapCitationToPage({ filename, index }) ?? undefined;
+    for (const part of content) {
+      const anns = Array.isArray(part?.annotations) ? part.annotations : [];
 
-          out.push({
-            type: "file_citation",
-            filename,
-            file_id,
-            index,
-            page,
-          });
-        }
+      for (const a of anns) {
+        if (a?.type !== "file_citation") continue;
+
+        // الشكل الجديد غالباً:
+        // a.file_citation = { file_id, quote, ... }
+        const fc = a.file_citation ?? null;
+
+        const file_id = fc?.file_id ?? a.file_id ?? undefined;
+        const quote = fc?.quote ?? a.quote ?? undefined;
+
+        // بعض الإصدارات تعطي index مباشرة أو داخل file_citation
+        const index =
+          typeof fc?.index === "number"
+            ? fc.index
+            : typeof a.index === "number"
+            ? a.index
+            : undefined;
+
+        // filename أحياناً غير متوفر في الشكل الجديد
+        const filename = a.filename ?? fc?.filename ?? undefined;
+
+        const page = mapCitationToPage({ filename, index }) ?? undefined;
+
+        out.push({
+          type: "file_citation",
+          filename,
+          file_id,
+          index,
+          page,
+          quote,
+        });
       }
     }
   }
@@ -64,44 +82,44 @@ export async function POST(req: Request) {
 You are a STRICT aviation manuals retrieval system.
 
 MANDATORY RULES:
-- Answer ONLY using retrieved excerpts from the manuals.
-- DO NOT use general knowledge.
-- DO NOT infer, guess, combine configurations, or normalize values.
-- If multiple configurations exist, list EACH exactly as written.
-- If NO citation is available, you MUST respond exactly with:
-  "Not found in manuals."
-- NEVER answer without at least one file citation.
-- Quote the exact sentence from the manual verbatim.
+- Answer ONLY using retrieved excerpts from the manuals via file_search.
+- DO NOT use general knowledge. DO NOT guess.
+- If you cannot find it in retrieved excerpts, reply exactly: "Not found in manuals."
+- Always include at least one verbatim quote from the manual when answering.
 
-OUTPUT FORMAT (STRICT):
+OUTPUT FORMAT:
 Direct Answer:
 <answer>
 
 Quote:
-"<exact sentence>"
-
-Reference:
-<filename>, page <page>
+"<verbatim quote>"
 `;
 
     const resp = await openai.responses.create({
-  model: process.env.ASK_MODEL || "gpt-4o-mini",
-  temperature: 0,
-  top_p: 1,
-  tool_choice: { type: "file_search" },
-  input: [
-    { role: "system", content: system },
-    { role: "user", content: q },
-  ],
-  tools: [
-    { type: "file_search", vector_store_ids: [VECTOR_STORE_ID], max_num_results: 10 },
-  ],
-});
+      model: process.env.ASK_MODEL || "gpt-4o-mini",
+      temperature: 0,
+      top_p: 1,
 
+      // ✅ اجبار استخدام البحث
+      tool_choice: { type: "file_search" },
+
+      input: [
+        { role: "system", content: system },
+        { role: "user", content: q },
+      ],
+
+      tools: [
+        {
+          type: "file_search",
+          vector_store_ids: [VECTOR_STORE_ID],
+          max_num_results: 10,
+        },
+      ],
+    });
 
     const citations = extractCitations(resp);
 
-    // ❌ لا Citation = لا Answer
+    // إذا ما فيه citations، رجّع Not found (بأمان)
     if (!citations.length) {
       return NextResponse.json({
         ok: true,
