@@ -3,55 +3,69 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 export const runtime = "nodejs";
 
-function assertAdmin(req: Request) {
+export async function POST(req: Request) {
   const headerSecret = (req.headers.get("x-admin-secret") || "").trim();
   const serverSecret = (process.env.ADMIN_SECRET || "").trim();
 
   if (!serverSecret) {
-    return {
-      ok: false as const,
-      res: NextResponse.json({ error: "ADMIN_SECRET missing" }, { status: 500 }),
-    };
+    return NextResponse.json({ ok: false, error: "ADMIN_SECRET missing" }, { status: 500 });
   }
   if (headerSecret !== serverSecret) {
-    return {
-      ok: false as const,
-      res: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  return { ok: true as const };
-}
 
-export async function POST(req: Request) {
-  const auth = assertAdmin(req);
-  if (!auth.ok) return auth.res;
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return NextResponse.json({ ok: false, error: "BLOB_READ_WRITE_TOKEN missing" }, { status: 500 });
+  }
+
+  let body: HandleUploadBody;
+  try {
+    body = (await req.json()) as HandleUploadBody;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+  }
 
   try {
-    const body = (await req.json()) as HandleUploadBody;
-
-    // Direct upload token generator
     const json = await handleUpload({
       body,
       request: req,
-      onBeforeGenerateToken: async (pathname) => {
-        // مسموح PDF فقط + حجم كبير (عدّل كما تريد)
+
+      onBeforeGenerateToken: async (pathname: string, clientPayload: string | null) => {
+        // payload اختياري (مثلاً key)
+        let key = "manual";
+        try {
+          const parsed = clientPayload ? JSON.parse(clientPayload) : null;
+          if (parsed?.key) key = String(parsed.key).trim() || "manual";
+        } catch {
+          // ignore
+        }
+
+        const safePath = (pathname || "").toLowerCase();
+        if (!safePath.endsWith(".pdf")) {
+          return {
+            allowedContentTypes: ["application/pdf"],
+            tokenPayload: JSON.stringify({ ok: false }),
+          };
+        }
+
         return {
           allowedContentTypes: ["application/pdf"],
-          maximumSizeInBytes: 250 * 1024 * 1024, // 250MB
-          // لازم تكون string حسب typings
-          tokenPayload: JSON.stringify({ pathname }),
+          maximumSizeInBytes: 200 * 1024 * 1024,
+          tokenPayload: JSON.stringify({ key }),
         };
       },
+
       onUploadCompleted: async () => {
-        // لا شيء هنا (نحن نعمل indexing في /api/admin/replace)
+        // لا شيء — الـ indexing سيتم عبر /api/admin/replace
       },
+
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
     return NextResponse.json(json);
   } catch (e: any) {
-    return NextResponse.json(
-      { error: "blob-upload-token failed", details: String(e?.message ?? e) },
-      { status: 500 }
-    );
+    const msg = String(e?.message ?? e);
+    const status = msg.toLowerCase().includes("unauthorized") ? 401 : 400;
+    return NextResponse.json({ ok: false, error: msg }, { status });
   }
 }

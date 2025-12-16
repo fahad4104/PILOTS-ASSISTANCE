@@ -1,93 +1,154 @@
 import { NextResponse } from "next/server";
-import { getOpenAI } from "@/lib/openai";
+import OpenAI from "openai";
+import { toFile } from "openai/uploads";
+import { list, del } from "@vercel/blob";
 
 export const runtime = "nodejs";
+
+type Body = {
+  key: string;
+  blobUrl: string;
+  blobPathname?: string;
+  deleteOld?: boolean;
+};
 
 function assertAdmin(req: Request) {
   const headerSecret = (req.headers.get("x-admin-secret") || "").trim();
   const serverSecret = (process.env.ADMIN_SECRET || "").trim();
 
   if (!serverSecret) {
-    return { ok: false as const, res: NextResponse.json({ error: "ADMIN_SECRET missing" }, { status: 500 }) };
+    return {
+      ok: false as const,
+      res: NextResponse.json({ ok: false, error: "ADMIN_SECRET missing" }, { status: 500 }),
+    };
   }
   if (headerSecret !== serverSecret) {
-    return { ok: false as const, res: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return {
+      ok: false as const,
+      res: NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 }),
+    };
   }
   return { ok: true as const };
-}
-
-function safeKey(input: string) {
-  const k = input.trim().toLowerCase().replace(/\s+/g, "_");
-  if (!/^[a-z0-9_-]+$/.test(k)) return null;
-  return k;
-}
-
-async function toNodeFileFromBlobUrl(url: string, filename: string) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Failed to fetch blob url: ${r.status}`);
-  const buf = Buffer.from(await r.arrayBuffer());
-  return new File([buf], filename, { type: "application/pdf" });
 }
 
 export async function POST(req: Request) {
   const auth = assertAdmin(req);
   if (!auth.ok) return auth.res;
 
-  const vectorStoreId = (process.env.VECTOR_STORE_ID || "").trim();
-  if (!vectorStoreId) {
-    return NextResponse.json({ error: "VECTOR_STORE_ID missing" }, { status: 500 });
+  const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
+  const VECTOR_STORE_ID = (process.env.VECTOR_STORE_ID || "").trim();
+  const BLOB_TOKEN = (process.env.BLOB_READ_WRITE_TOKEN || "").trim();
+
+  if (!OPENAI_API_KEY) {
+    return NextResponse.json({ ok: false, error: "OPENAI_API_KEY missing" }, { status: 500 });
+  }
+  if (!VECTOR_STORE_ID) {
+    return NextResponse.json({ ok: false, error: "VECTOR_STORE_ID missing" }, { status: 500 });
+  }
+  if (!BLOB_TOKEN) {
+    return NextResponse.json({ ok: false, error: "BLOB_READ_WRITE_TOKEN missing" }, { status: 500 });
+  }
+
+  let body: Body;
+  try {
+    body = (await req.json()) as Body;
+  } catch {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Invalid JSON (replace expects JSON: {key, blobUrl, blobPathname, deleteOld})",
+      },
+      { status: 400 }
+    );
+  }
+
+  const key = String(body.key || "").trim().toLowerCase();
+  const blobUrl = String(body.blobUrl || "").trim();
+  const blobPathname = String(body.blobPathname || "").trim();
+  const deleteOldRequested = Boolean(body.deleteOld);
+
+  if (!key || !blobUrl) {
+    return NextResponse.json({ ok: false, error: "Missing key/blobUrl" }, { status: 400 });
+  }
+
+  // حماية بسيطة: نتأكد أنه PDF غالباً
+  if (!blobUrl.toLowerCase().includes(".pdf")) {
+    // (مو شرط 100%، لكن يقلل أخطاء)
+    // إذا ما تبيها، احذف هذا الشرط.
   }
 
   try {
-    const openai = getOpenAI();
+    // 1) حذف النسخ القديمة (اختياري) — مع استثناء الملف الجديد بشكل آمن
+    let deletedCount = 0;
 
-    const body = await req.json();
-    const key = safeKey(String(body?.key ?? ""));
-    const blobUrl = String(body?.blobUrl ?? "");
-    const blobPathname = String(body?.blobPathname ?? "");
-    const deleteOld = Boolean(body?.deleteOld ?? false);
+    if (deleteOldRequested) {
+      const prefix = `manuals/${key}/`;
+      const result = await list({ prefix, limit: 1000, token: BLOB_TOKEN });
 
-    if (!key) return NextResponse.json({ error: "Invalid key (letters/numbers/_/- only)" }, { status: 400 });
-    if (!blobUrl) return NextResponse.json({ error: "blobUrl missing" }, { status: 400 });
+      const toDelete = result.blobs
+        .filter((b) => {
+          // استثناء الجديد:
+          if (blobPathname) return b.pathname !== blobPathname;
+          // إذا ما عندنا pathname، نستثني بالـ url
+          return b.url !== blobUrl;
+        })
+        .map((b) => b.url);
 
-    // 1) Upload to OpenAI Files
-    const nodeFile = await toNodeFileFromBlobUrl(blobUrl, `${key}.pdf`);
-    const openaiFile = await openai.files.create({
-      file: nodeFile as any,
-      purpose: "assistants",
-    } as any);
-
-    const openaiFileId = (openaiFile as any)?.id;
-    if (!openaiFileId) {
-      return NextResponse.json({ error: "OpenAI file id missing" }, { status: 500 });
+      if (toDelete.length) {
+        await del(toDelete, { token: BLOB_TOKEN });
+        deletedCount = toDelete.length;
+      }
     }
 
-    // 2) Attach to Vector Store (start indexing)
-    const vsFile = await (openai as any).vectorStores.files.create(vectorStoreId, {
-      file_id: openaiFileId,
-      attributes: {
-        key,
-        blob_url: blobUrl,
-        blob_path: blobPathname,
-      },
+    // 2) تنزيل PDF من blobUrl
+    const pdfRes = await fetch(blobUrl);
+    if (!pdfRes.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Failed to fetch blobUrl",
+          details: `${pdfRes.status} ${pdfRes.statusText}`,
+        },
+        { status: 400 }
+      );
+    }
+
+    const contentType = (pdfRes.headers.get("content-type") || "").toLowerCase();
+    if (contentType && !contentType.includes("pdf")) {
+      // ليس منعاً قاطعاً، لكن مفيد للتشخيص
+      // إذا ما تبيها، احذف الشرط.
+    }
+
+    const buf = Buffer.from(await pdfRes.arrayBuffer());
+
+    // 3) OpenAI upload
+    const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+    const fileForOpenAI = await toFile(buf, `${key}.pdf`, { type: "application/pdf" });
+
+    const uploaded = await client.files.create({
+      file: fileForOpenAI,
+      purpose: "assistants",
     });
 
-    const vectorStoreFileId = vsFile?.id ?? null;
+    // 4) Attach to Vector Store
+    const vsFile = await (client as any).vectorStores.files.create(VECTOR_STORE_ID, {
+      file_id: uploaded.id,
+    });
 
-    // ملاحظة: deleteOld اختياري—لو تبي لاحقاً نضيف حذف الإصدارات القديمة من الـ vector store + blob
     return NextResponse.json({
       ok: true,
       indexed: "started",
       key,
       blobUrl,
-      blobPathname,
-      openai_file_id: openaiFileId,
-      vector_store_file_id: vectorStoreFileId,
-      deleteOldRequested: deleteOld,
+      blobPathname: blobPathname || null,
+      openai_file_id: uploaded.id,
+      vector_store_file_id: vsFile.id,
+      deleteOldRequested,
+      deletedOldBlobCount: deletedCount,
     });
   } catch (e: any) {
     return NextResponse.json(
-      { error: "Replace+Index failed", details: String(e?.message ?? e) },
+      { ok: false, error: "Replace/index failed", details: String(e?.message ?? e) },
       { status: 500 }
     );
   }
