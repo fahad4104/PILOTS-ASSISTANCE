@@ -3,14 +3,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { upload } from "@vercel/blob/client";
 
-type Tab = "upload" | "library";
+type Tab = "upload" | "library" | "vector";
 
-type BlobItem = {
-  url: string;
-  downloadUrl: string | null;
-  pathname: string;
-  size: number;
-  uploadedAt: string;
+type ManualItem = {
+  id: string;
+  key: string;
+  originalName: string;
+  blobUrl: string;
+  blobPathname: string;
+  openaiFileId: string;
+  createdAt: string;
+};
+
+// ✅ هذا الشكل يطابق اللي راجع من /api/admin/vectorstore/list عندك
+type VectorStoreFileItem = {
+  vs_file_id: string; // vector_store_file_id (هذا اللي نحذفه من VS)
+  openai_file_id?: string; // OpenAI file id (للحذف النهائي)
+  filename?: string;
+  bytes?: number;
+  created_at?: number; // seconds
+  status?: string;
+  [k: string]: any;
 };
 
 function safeJson(text: string) {
@@ -36,98 +49,248 @@ export default function AdminUploadPage() {
   const [blobUrl, setBlobUrl] = useState<string>("");
   const [blobPathname, setBlobPathname] = useState<string>("");
 
-  // library state
+  // library state (DB Manuals)
   const [loadingLib, setLoadingLib] = useState(false);
-  const [blobs, setBlobs] = useState<BlobItem[]>([]);
+  const [items, setItems] = useState<ManualItem[]>([]);
   const [libError, setLibError] = useState<string | null>(null);
+
+  // vector store state
+  const [loadingVS, setLoadingVS] = useState(false);
+  const [vsError, setVsError] = useState<string | null>(null);
+  const [vsFiles, setVsFiles] = useState<VectorStoreFileItem[]>([]);
 
   const prefix = useMemo(() => "manuals/", []);
 
   async function refreshLibrary() {
     setLoadingLib(true);
     setLibError(null);
-    try {
-      const res = await fetch(
-  `/api/admin/blobs?prefix=${encodeURIComponent(prefix)}&limit=200`,
-  {
-    method: "GET",
-    cache: "no-store",
-    headers: {
-      "x-admin-secret": adminSecret.trim(),
-    },
-  }
-);
 
-
-      const text = await res.text();
-      const data = safeJson(text);
-
-      if (!res.ok || !data?.ok) {
-        setLibError((data as any)?.error || (data as any)?.raw || `Failed (${res.status})`);
-        setBlobs([]);
-        return;
-      }
-
-      setBlobs(Array.isArray(data?.blobs) ? data.blobs : []);
-    } catch (e: any) {
-      setLibError(String(e?.message ?? e));
-      setBlobs([]);
-    } finally {
-      setLoadingLib(false);
-    }
-  }
-
-  useEffect(() => {
-    if (tab === "library") refreshLibrary();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
-
-  // مهم: إذا تغيّر الملف أو key، صفّر الـ blob الحالي لتفادي Replace على Blob قديم
-  useEffect(() => {
-    setBlobUrl("");
-    setBlobPathname("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file, key]);
-
-  async function deleteBlob(pathname: string) {
     if (!adminSecret.trim()) {
-      setResult({ ok: false, error: "Admin Secret required to delete" });
+      setLibError("Admin Secret required to load library");
+      setItems([]);
+      setLoadingLib(false);
       return;
     }
 
-    const yes = confirm(`Delete this file?\n${pathname}`);
-    if (!yes) return;
-
-    setBusy(true);
-    setResult(null);
     try {
-      const res = await fetch("/api/admin/blob-delete", {
-        method: "POST",
+      const res = await fetch("/api/admin/manuals/list", {
+        method: "GET",
+        cache: "no-store",
         headers: {
-          "Content-Type": "application/json",
           "x-admin-secret": adminSecret.trim(),
         },
-        body: JSON.stringify({ pathname }),
       });
 
       const text = await res.text();
       const data = safeJson(text);
 
       if (!res.ok || !data?.ok) {
-        setResult({ ok: false, status: res.status, ...data });
+        setLibError((data as any)?.error || (data as any)?.raw || `Failed (${res.status})`);
+        setItems([]);
         return;
       }
 
-      setResult({ ok: true, step: "delete", data });
-      await refreshLibrary();
+      setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (e: any) {
-      setResult({ ok: false, error: String(e?.message ?? e) });
+      setLibError(String(e?.message ?? e));
+      setItems([]);
+    } finally {
+      setLoadingLib(false);
+    }
+  }
+
+  async function refreshVectorStore() {
+    setLoadingVS(true);
+    setVsError(null);
+
+    if (!adminSecret.trim()) {
+      setVsError("Admin Secret required to load vector store files");
+      setVsFiles([]);
+      setLoadingVS(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/admin/vectorstore/list", {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+          "x-admin-secret": adminSecret.trim(),
+        },
+      });
+
+      const text = await res.text();
+      const data = safeJson(text);
+
+      if (!res.ok || !data?.ok) {
+        setVsError((data as any)?.error || (data as any)?.raw || `Failed (${res.status})`);
+        setVsFiles([]);
+        setResult(data);
+        return;
+      }
+
+      const list = Array.isArray(data?.files)
+        ? data.files
+        : Array.isArray(data?.items)
+        ? data.items
+        : Array.isArray(data?.data)
+        ? data.data
+        : [];
+
+      setVsFiles(list);
+      setResult(data);
+    } catch (e: any) {
+      setVsError(String(e?.message ?? e));
+      setVsFiles([]);
+    } finally {
+      setLoadingVS(false);
+    }
+  }
+
+  async function clearVectorStore(deleteFilesToo: boolean) {
+    if (!adminSecret.trim()) {
+      setResult({ ok: false, error: "Admin Secret required" });
+      return;
+    }
+
+    const yes = confirm(
+      deleteFilesToo
+        ? "Clear vector store AND delete the files from OpenAI too?\nThis is destructive."
+        : "Clear vector store only?\n(Does not delete OpenAI files)"
+    );
+    if (!yes) return;
+
+    setBusy(true);
+    setResult(null);
+
+    try {
+      const res = await fetch("/api/admin/vectorstore/clear", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": adminSecret.trim(),
+        },
+        body: JSON.stringify({ deleteFilesToo }),
+      });
+
+      const text = await res.text();
+      const data = safeJson(text);
+
+      if (!res.ok || !data?.ok) {
+        setResult({ ok: false, step: "vectorstore_clear", status: res.status, ...data });
+        return;
+      }
+
+      setResult({ ok: true, step: "vectorstore_clear", status: res.status, ...data });
+      await refreshVectorStore();
+    } catch (e: any) {
+      setResult({ ok: false, step: "vectorstore_clear", error: String(e?.message ?? e) });
     } finally {
       setBusy(false);
     }
   }
 
-  // 1) Direct upload to Blob
+  // ✅ NEW: delete one VS file (detach only OR detach+delete OpenAI file)
+  async function deleteOneVSFile(vsFileId: string, deleteFileToo: boolean) {
+    if (!adminSecret.trim()) {
+      setResult({ ok: false, error: "Admin Secret required" });
+      return;
+    }
+    if (!vsFileId) {
+      setResult({ ok: false, error: "Missing vs_file_id" });
+      return;
+    }
+
+    const msg = deleteFileToo
+      ? `Delete this item from Vector Store AND delete OpenAI file?\n\nvs_file_id: ${vsFileId}\n\nThis is destructive.`
+      : `Detach this item from Vector Store only?\n\nvs_file_id: ${vsFileId}`;
+
+    const yes = confirm(msg);
+    if (!yes) return;
+
+    setBusy(true);
+    setResult(null);
+
+    try {
+      const res = await fetch("/api/admin/vectorstore/delete", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": adminSecret.trim(),
+        },
+        body: JSON.stringify({ vs_file_id: vsFileId, deleteFileToo }),
+      });
+
+      const text = await res.text();
+      const data = safeJson(text);
+
+      if (!res.ok || data?.ok === false) {
+        setResult({ ok: false, step: "vectorstore_delete_one", status: res.status, ...data });
+        return;
+      }
+
+      setResult({ ok: true, step: "vectorstore_delete_one", status: res.status, ...data });
+      await refreshVectorStore();
+    } catch (e: any) {
+      setResult({ ok: false, step: "vectorstore_delete_one", error: String(e?.message ?? e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "library") refreshLibrary();
+    if (tab === "vector") refreshVectorStore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  useEffect(() => {
+    setBlobUrl("");
+    setBlobPathname("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, key]);
+
+  async function deleteManualEverywhere(manualKey: string) {
+    if (!adminSecret.trim()) {
+      setResult({ ok: false, error: "Admin Secret required to delete" });
+      return;
+    }
+
+    const yes = confirm(`Delete from ALL places?\nkey: ${manualKey}`);
+    if (!yes) return;
+
+    setBusy(true);
+    setResult(null);
+
+    try {
+      const res = await fetch("/api/admin/manuals/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": adminSecret.trim(),
+        },
+        body: JSON.stringify({ key: manualKey }),
+      });
+
+      const text = await res.text();
+      const data = safeJson(text);
+
+      if (!res.ok || !data?.ok) {
+        setResult({ ok: false, step: "manual_delete", status: res.status, ...data });
+        return;
+      }
+
+      setResult({ ok: true, step: "manual_delete", status: res.status, ...data });
+      await refreshLibrary();
+    } catch (e: any) {
+      setResult({ ok: false, step: "manual_delete", error: String(e?.message ?? e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function uploadToBlob() {
     if (!adminSecret.trim()) {
       setResult({ ok: false, error: "Admin Secret required" });
@@ -156,7 +319,7 @@ export default function AdminUploadPage() {
 
       const ts = new Date().toISOString().replace(/[:.]/g, "-");
       const safeName = file.name.replace(/[^\w.\-()+\s]/g, "_");
-      const pathname = `${prefix}${key.trim()}/${ts}-${safeName}`;
+      const pathname = `${prefix}${key.trim().toLowerCase()}/${ts}-${safeName}`;
 
       const blob = await upload(pathname, file, {
         access: "public",
@@ -164,7 +327,7 @@ export default function AdminUploadPage() {
         headers: {
           "x-admin-secret": adminSecret.trim(),
         },
-        clientPayload: JSON.stringify({ key: key.trim() }),
+        clientPayload: JSON.stringify({ key: key.trim().toLowerCase() }),
       });
 
       setBlobUrl(blob.url);
@@ -172,7 +335,6 @@ export default function AdminUploadPage() {
 
       setResult({ ok: true, step: "blob_upload", blob });
 
-      // حدّث الليبراري فقط إذا المستخدم فعلاً داخل تبويب Library
       if (tab === "library") await refreshLibrary();
     } catch (e: any) {
       setResult({ ok: false, step: "blob_upload", error: String(e?.message ?? e) });
@@ -181,7 +343,6 @@ export default function AdminUploadPage() {
     }
   }
 
-  // 2) Replace & Index using blobUrl/blobPathname (JSON)
   async function replaceAndIndex() {
     if (!adminSecret.trim()) {
       setResult({ ok: false, error: "Admin Secret required" });
@@ -207,7 +368,7 @@ export default function AdminUploadPage() {
           "x-admin-secret": adminSecret.trim(),
         },
         body: JSON.stringify({
-          key: key.trim(),
+          key: key.trim().toLowerCase(),
           blobUrl: blobUrl.trim(),
           blobPathname: blobPathname || undefined,
           deleteOld,
@@ -225,6 +386,7 @@ export default function AdminUploadPage() {
       setResult({ ok: true, step: (data as any)?.step || "replace", status: res.status, ...data });
 
       if (tab === "library") await refreshLibrary();
+      if (tab === "vector") await refreshVectorStore();
     } catch (e: any) {
       setResult({ ok: false, error: String(e?.message ?? e) });
     } finally {
@@ -243,11 +405,19 @@ export default function AdminUploadPage() {
         >
           Upload PDF
         </button>
+
         <button
           className={`px-4 py-2 rounded border ${tab === "library" ? "bg-black text-white" : "bg-white"}`}
           onClick={() => setTab("library")}
         >
-          Library
+          DB Library
+        </button>
+
+        <button
+          className={`px-4 py-2 rounded border ${tab === "vector" ? "bg-black text-white" : "bg-white"}`}
+          onClick={() => setTab("vector")}
+        >
+          Vector Store
         </button>
       </div>
 
@@ -260,6 +430,18 @@ export default function AdminUploadPage() {
           onChange={(e) => setAdminSecret(e.target.value)}
           placeholder="ADMIN_SECRET"
         />
+
+        {tab === "library" && (
+          <div className="mt-2 text-xs text-gray-600">
+            DB Library يقرأ من SQLite (Manuals). هذا ليس مصدر الإجابة في /ask.
+          </div>
+        )}
+
+        {tab === "vector" && (
+          <div className="mt-2 text-xs text-gray-600">
+            Vector Store هو المصدر الفعلي للإجابات في /ask (file_search). هنا تشوف فعليًا الكتب المرفوعة للـ Vector Store.
+          </div>
+        )}
       </section>
 
       {tab === "upload" && (
@@ -268,11 +450,7 @@ export default function AdminUploadPage() {
 
           <div className="space-y-1">
             <label className="block text-sm font-medium">Choose File (PDF)</label>
-            <input
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
+            <input type="file" accept="application/pdf,.pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             {file && (
               <div className="text-sm text-gray-600">
                 Selected: {file.name} ({Math.round(file.size / 1024)} KB)
@@ -333,7 +511,7 @@ export default function AdminUploadPage() {
       {tab === "library" && (
         <section className="border rounded p-4 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Library ({prefix})</h2>
+            <h2 className="text-xl font-semibold">DB Library (Manuals table)</h2>
             <button className="px-4 py-2 rounded border" onClick={refreshLibrary} disabled={loadingLib}>
               {loadingLib ? "Refreshing..." : "Refresh"}
             </button>
@@ -342,33 +520,116 @@ export default function AdminUploadPage() {
           {libError && <div className="text-sm text-red-600">{libError}</div>}
 
           <div className="space-y-3">
-            {blobs.length === 0 && !loadingLib ? (
-              <div className="text-sm text-gray-600">No files found.</div>
+            {items.length === 0 && !loadingLib ? (
+              <div className="text-sm text-gray-600">No manuals found in DB.</div>
             ) : (
-              blobs.map((b) => (
-                <div key={b.pathname} className="border rounded p-3">
-                  <div className="font-mono text-sm break-all">{b.pathname}</div>
+              items.map((m) => (
+                <div key={m.id} className="border rounded p-3">
+                  <div className="font-mono text-sm">key: {m.key}</div>
                   <div className="text-sm text-gray-600">
-                    Size: {Math.round(b.size / 1024)} KB • Uploaded:{" "}
-                    {b.uploadedAt ? new Date(b.uploadedAt).toLocaleString() : "—"}
+                    {m.originalName} • {m.createdAt ? new Date(m.createdAt).toLocaleString() : "—"}
                   </div>
 
-                  <div className="flex items-center gap-3 mt-2">
-                    <a className="text-sm underline" href={b.url} target="_blank" rel="noreferrer">
-                      Open
+                  <div className="mt-2 text-xs font-mono break-all text-gray-600">{m.blobPathname}</div>
+
+                  <div className="flex items-center gap-3 mt-3">
+                    <a className="text-sm underline" href={m.blobUrl} target="_blank" rel="noreferrer">
+                      Open PDF
                     </a>
 
                     <button
                       className="text-sm px-3 py-1 rounded border"
-                      onClick={() => deleteBlob(b.pathname)}
+                      onClick={() => deleteManualEverywhere(m.key)}
                       disabled={busy}
                     >
-                      Delete
+                      Delete (everywhere)
                     </button>
                   </div>
                 </div>
               ))
             )}
+          </div>
+
+          <div className="border rounded p-3 bg-gray-50">
+            <pre className="text-xs overflow-auto">{JSON.stringify(result ?? {}, null, 2)}</pre>
+          </div>
+        </section>
+      )}
+
+      {tab === "vector" && (
+        <section className="border rounded p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Vector Store Files</h2>
+
+            <div className="flex items-center gap-2">
+              <button className="px-4 py-2 rounded border" onClick={refreshVectorStore} disabled={loadingVS}>
+                {loadingVS ? "Loading..." : "List Vector Store Files"}
+              </button>
+
+              <button className="px-4 py-2 rounded border" onClick={() => clearVectorStore(false)} disabled={busy}>
+                Clear VS (detach only)
+              </button>
+
+              <button className="px-4 py-2 rounded border" onClick={() => clearVectorStore(true)} disabled={busy}>
+                Clear VS + Delete Files
+              </button>
+            </div>
+          </div>
+
+          {vsError && <div className="text-sm text-red-600">{vsError}</div>}
+
+          <div className="space-y-3">
+            {vsFiles.length === 0 && !loadingVS ? (
+              <div className="text-sm text-gray-600">No files found in Vector Store (or endpoint returned empty).</div>
+            ) : (
+              vsFiles.map((f) => {
+                const vsId = String(f?.vs_file_id || "").trim();
+                const openaiId = String(f?.openai_file_id || "").trim();
+
+                return (
+                  <div key={vsId || openaiId || Math.random().toString(36)} className="border rounded p-3">
+                    <div className="font-mono text-sm break-all">vs_file_id: {vsId || "—"}</div>
+                    <div className="font-mono text-xs break-all text-gray-600">openai_file_id: {openaiId || "—"}</div>
+
+                    <div className="text-sm text-gray-600 mt-1">
+                      {f.filename ? `Name: ${f.filename}` : "Name: —"}{" "}
+                      {typeof f.bytes === "number" ? `• Size: ${Math.round(f.bytes / 1024)} KB` : ""}
+                      {typeof f.created_at === "number"
+                        ? ` • Created: ${new Date(f.created_at * 1000).toLocaleString()}`
+                        : ""}
+                      {f.status ? ` • Status: ${f.status}` : ""}
+                    </div>
+
+                    {/* ✅ NEW: per-file delete buttons */}
+                    <div className="flex items-center gap-3 mt-3">
+                      <button
+                        className="text-sm px-3 py-1 rounded border"
+                        disabled={busy || !vsId}
+                        onClick={() => deleteOneVSFile(vsId, false)}
+                      >
+                        Delete (detach only)
+                      </button>
+
+                      <button
+                        className="text-sm px-3 py-1 rounded border"
+                        disabled={busy || !vsId}
+                        onClick={() => deleteOneVSFile(vsId, true)}
+                      >
+                        Delete (detach + OpenAI file)
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="border rounded p-3 bg-gray-50">
+            <pre className="text-xs overflow-auto">{JSON.stringify(result ?? {}, null, 2)}</pre>
+          </div>
+
+          <div className="text-xs text-gray-600">
+            ملاحظة: المصدر الحقيقي لـ /ask هو Vector Store. DB Library مجرد سجل عندك.
           </div>
         </section>
       )}
