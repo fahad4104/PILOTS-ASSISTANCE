@@ -146,6 +146,42 @@ function fileSearchHadResults(resp: any): boolean {
   return false;
 }
 
+// ===== NEW: References formatting + answer normalization (no UI change) =====
+
+function formatRefLine(c: Citation) {
+  const name = c.filename || c.file_id || "unknown";
+  const loc =
+    typeof c.page === "number"
+      ? `page ${c.page}`
+      : typeof c.index === "number"
+      ? `index ${c.index}`
+      : "index ?";
+  return `- ${name} • ${loc}`;
+}
+
+function buildReferencesBlock(citations: Citation[]) {
+  const lines = citations.map(formatRefLine);
+  return `References:\n${lines.join("\n")}`;
+}
+
+/**
+ * Ensure the final answer is:
+ * Direct Answer + Quote (from model) + References (from citations)
+ * Also removes any References the model might have generated.
+ */
+function normalizeAnswer(answerText: string, citations: Citation[]) {
+  const cleaned = String(answerText || "").trim();
+
+  // Remove any model-written References section if present
+  // (We keep everything before "References:" / "Reference:" / "REFERENCES:")
+  const parts = cleaned.split(/\n\s*(References|Reference)\s*:\s*\n/i);
+  const base = parts[0].trim();
+
+  const refs = buildReferencesBlock(citations);
+
+  return `${base}\n\n${refs}`.trim();
+}
+
 export async function POST(req: Request) {
   try {
     const { question, lang } = await req.json();
@@ -163,25 +199,28 @@ export async function POST(req: Request) {
     const system = `
 You are a STRICT aviation manuals retrieval system.
 
-MANDATORY RULES:
+MANDATORY RULES (UPDATED):
 - Answer ONLY using retrieved excerpts from the manuals via file_search.
 - DO NOT use general knowledge. DO NOT guess.
 - DO NOT summarize, generalize, or say "varies" or "generally".
-- If the retrieved text is a table, output the values EXACTLY as a list.
 - If you cannot find it in retrieved excerpts, reply exactly: "Not found in manuals."
 - Always include at least one verbatim quote from the manual when answering.
+- CRITICAL: Output ONE canonical value only. NEVER output multiple competing values.
+
+CANONICAL SELECTION RULE (when multiple values exist in the retrieved excerpts):
+1) Prefer FCOMover AFM/other docs.
+2) Prefer the exact aircraft variant/config match if present.
+3) If still multiple, choose the most conservative (lowest) value.
+4) Do NOT list other values unless the user explicitly asks "show alternatives".
 
 OUTPUT FORMAT (STRICT, ALWAYS THE SAME):
 Direct Answer:
-<one-line answer WITHOUT ranges; say "See values below.">
-
-Values:
-- <Aircraft/Config>: <number>
-- <Aircraft/Config>: <number>
-- ...
+<ONE line, ONE value only. If applicable include aircraft/variant/config in the same line.>
 
 Quote:
-"<verbatim quote>"
+"<ONE verbatim quote that supports the chosen value>"
+
+DO NOT include a References section. The system will add references automatically.
 `;
 
     const resp = await openai.responses.create({
@@ -201,7 +240,8 @@ Quote:
         {
           type: "file_search",
           vector_store_ids: [VECTOR_STORE_ID],
-          max_num_results: 10,
+          // تقليل النتائج يقلل التضارب ويحسن الثبات
+          max_num_results: 6,
         },
       ],
     });
@@ -217,29 +257,26 @@ Quote:
       });
     }
 
-    // (اختياري لكنه مفيد): تأكيد إضافي أن file_search أعطى نتائج
-    // لو ما قدرنا نثبت tool_call، ما نكسر لأن citations نفسها إثبات كافي
-    // لكن لو tool_call موجود ورجّع 0 نتائج، نرجّع Not found
+    // (اختياري) تأكيد إضافي أن file_search أعطى نتائج
+    // لا نكسر إذا citations موجودة لأن citations نفسها إثبات كافي
     const toolOk = fileSearchHadResults(resp);
     if (toolOk === false) {
-      // لا نعمل override إذا citations موجودة (لأنها دليل قوي)
-      // ولكن إذا تبغاه أقسى: فعّل هذا الشرط فقط عندما تكتشف tool_call صراحة
-      // هنا نتركه كما هو لأن citations موجودة.
+      // intentionally no override: citations are sufficient proof of retrieval
     }
 
-    const answerText =
+    const answerTextRaw =
       typeof resp.output_text === "string" && resp.output_text.trim()
         ? resp.output_text.trim()
         : lang === "ar"
         ? "غير موجود في الدليل."
         : "Not found in manuals.";
 
-    // Safety: لو output_text رجّع "Not found" لكن citations موجودة (نادر)
-    // نخليه كما هو لأن النظام طلب صيغة ثابتة.
+    // Enforce final canonical format: add ALL references from citations (no UI change)
+    const answerTextFinal = normalizeAnswer(answerTextRaw, citations);
 
     return NextResponse.json({
       ok: true,
-      answer: answerText,
+      answer: answerTextFinal,
       citations,
     });
   } catch (e: any) {
