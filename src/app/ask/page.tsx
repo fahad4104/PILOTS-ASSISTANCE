@@ -6,14 +6,12 @@ type Citation = {
   type: "file_citation";
   file_id?: string;
   filename?: string;
-  index?: number;     // index from OpenAI
-  page?: number;      // our mapped page (if available)
+  index?: number; // index from OpenAI
+  page?: number;  // our mapped page (if available)
 };
 
 export default function AskPage() {
   const [question, setQuestion] = useState("");
-  const [lang, setLang] = useState<"en" | "ar">("en");
-
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState("");
   const [citations, setCitations] = useState<Citation[]>([]);
@@ -27,7 +25,8 @@ export default function AskPage() {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: question.trim(), lang }),
+        // language fixed to English
+        body: JSON.stringify({ question: question.trim(), lang: "en" }),
       });
 
       const text = await res.text();
@@ -52,18 +51,6 @@ export default function AskPage() {
     <main className="max-w-4xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-2xl font-bold">Ask Pilot Assistance</h1>
-
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Language</label>
-          <select
-            value={lang}
-            onChange={(e) => setLang(e.target.value as any)}
-            className="border rounded px-2 py-1"
-          >
-            <option value="en">English</option>
-            <option value="ar">Arabic</option>
-          </select>
-        </div>
       </div>
 
       <textarea
