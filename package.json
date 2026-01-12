@@ -10,13 +10,15 @@
     "vercel-build": "npx prisma generate && npx prisma migrate deploy && next build"
   },
   "dependencies": {
-    
     "@prisma/client": "^6.19.1",
     "@vercel/blob": "^2.0.0",
-    "next": "16.0.10",
+    "canvas": "^3.2.1",
+    "next": "^16.1.1",
     "openai": "^6.10.0",
-    "react": "19.2.1",
-    "react-dom": "19.2.1",
+    "pdf-parse": "^1.1.4",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "zod": "^4.1.13"
   },
   "devDependencies": {

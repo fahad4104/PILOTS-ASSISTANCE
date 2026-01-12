@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 type Citation = {
   type: "file_citation";
   file_id?: string;
   filename?: string;
   index?: number; // index from OpenAI
-  page?: number;  // our mapped page (if available)
+  page?: number; // our mapped page (if available)
 };
 
 export default function AskPage() {
@@ -60,13 +61,22 @@ export default function AskPage() {
         placeholder="Type your question..."
       />
 
-      <button
-        onClick={ask}
-        disabled={loading || !question.trim()}
-        className="px-5 py-2 rounded bg-black text-white disabled:opacity-50"
-      >
-        {loading ? "Asking..." : "Ask"}
-      </button>
+      <div className="flex gap-3 flex-wrap">
+        <button
+          onClick={ask}
+          disabled={loading || !question.trim()}
+          className="px-5 py-2 rounded bg-black text-white disabled:opacity-50"
+        >
+          {loading ? "Asking..." : "Ask"}
+        </button>
+
+        <Link
+          href="/flight-plan"
+          className="px-5 py-2 rounded border border-black text-black hover:bg-gray-50"
+        >
+          Flight Plan Analyzer
+        </Link>
+      </div>
 
       <section className="border rounded p-4 bg-white space-y-3">
         <h2 className="font-semibold">Answer</h2>
