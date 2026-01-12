@@ -525,8 +525,8 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta?: stri
   const notamPattern = /([A-Z0-9]{1,2}[A-Z]{1,2}\d{3,4}\/\d{2}[\s\S]{0,800}?)(?=[A-Z0-9]{1,2}[A-Z]{1,2}\d{3,4}\/\d{2}|Page|====|$)/gi;
   const notamMatches = text.match(notamPattern) || [];
   
-  console.log("Total NOTAM blocks found:", notamMatches.length);
-  if (notamMatches.length > 0) {
+    console.log("Total NOTAM blocks found:", notamMatches.length);
+  if (notamMatches.length > 0 && notamMatches[0]) {
     console.log("First NOTAM sample:", notamMatches[0].substring(0, 200));
   }
   
