@@ -172,11 +172,46 @@ function parseFlightInfo(text: string): FlightInfo {
     info.ezfw = weightsMatch[4];
   }
 
-  // Extract route for runways: OMAA/31L ... RPLL/06
-  const routeMatch = text.match(/([A-Z]{4})\/(\d{2}[LRC]?)\s+DCT[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
+    // Extract route for runways: OMAA/31L ... RPLL/06
+  // Try multiple patterns to match different OFP formats
+  
+  // Pattern 1: With DCT: OMAA/31L DCT ... RPLL/06
+  let routeMatch = text.match(/([A-Z]{4})\/(\d{2}[LRC]?)\s+DCT[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
+  
+  // Pattern 2: Without DCT: LOWW/29 ADAMA2C ... OMAA/31L
+  if (!routeMatch) {
+    routeMatch = text.match(/([A-Z]{4})\/(\d{2}[LRC]?)\s+[A-Z0-9]+[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
+  }
+  
+  // Pattern 3: From route line specifically
+  if (!routeMatch) {
+    const routeLineMatch = text.match(/(?:ROUTE|ATS ROUTE|FPL)[\s\S]{0,50}([A-Z]{4})\/(\d{2}[LRC]?)[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
+    if (routeLineMatch) {
+      routeMatch = routeLineMatch;
+    }
+  }
+  
   if (routeMatch) {
     info.departureRunway = routeMatch[2];
     info.arrivalRunway = routeMatch[4];
+  }
+  
+  // Fallback: Search for departure and arrival runways separately
+  if (!info.departureRunway && info.departure) {
+    // Look for departure ICAO followed by runway
+    const depMatch = text.match(new RegExp(`${info.departure}.*?([A-Z]{4})\/(\d{2}[LRC]?)`, 'i'));
+    if (depMatch) info.departureRunway = depMatch[2];
+  }
+  
+  if (!info.arrivalRunway && info.destination) {
+    // Look for arrival ICAO followed by runway near the end of route
+    const arrMatches = text.match(new RegExp(`([A-Z]{4})\/(\d{2}[LRC]?)`, 'g'));
+    if (arrMatches && arrMatches.length > 1) {
+      // Last runway in route is usually arrival
+      const lastRunway = arrMatches[arrMatches.length - 1];
+      const lastMatch = lastRunway.match(/([A-Z]{4})\/(\d{2}[LRC]?)/);
+      if (lastMatch) info.arrivalRunway = lastMatch[2];
+    }
   }
 
   // Extract TRIP time: TRIP RPLL 59731 0738
