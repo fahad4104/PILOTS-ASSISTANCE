@@ -48,6 +48,15 @@ export default function AskPage() {
     }
   }
 
+  // ✅ Helper function to remove References section from answer
+  function getAnswerWithoutReferences(fullAnswer: string): string {
+    if (!fullAnswer) return "";
+    
+    // Split at "References:" (case-insensitive) and take only the first part
+    const parts = fullAnswer.split(/\n\s*References\s*:/i);
+    return parts[0].trim();
+  }
+
   return (
     <main className="max-w-4xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -80,8 +89,12 @@ export default function AskPage() {
 
       <section className="border rounded p-4 bg-white space-y-3">
         <h2 className="font-semibold">Answer</h2>
-        <div className="whitespace-pre-wrap">{answer || "—"}</div>
+        {/* ✅ Display answer WITHOUT the References section */}
+        <div className="whitespace-pre-wrap">
+          {getAnswerWithoutReferences(answer) || "—"}
+        </div>
 
+        {/* ✅ Display References separately from citations */}
         <h3 className="font-semibold pt-2">References</h3>
         {citations.length === 0 ? (
           <div className="text-sm text-gray-600">No citations returned.</div>
@@ -89,7 +102,7 @@ export default function AskPage() {
           <ul className="list-disc pl-5 text-sm">
             {citations.map((c, i) => {
               const name = c.filename ?? c.file_id ?? "file";
-              const pagePart = typeof c.page === "number" ? `— page ${c.page}` : "";
+              const pagePart = typeof c.page === "number" ? `• page ${c.page}` : "";
               const indexPart = typeof c.index === "number" ? `• index ${c.index}` : "";
               return (
                 <li key={i}>
