@@ -27,6 +27,9 @@ export default function ImportRosterPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [previewData, setPreviewData] = useState<Flight[]>([]);
+  const [showAutoSync, setShowAutoSync] = useState(false);
+  const [ecrewEmail, setEcrewEmail] = useState("");
+  const [ecrewPassword, setEcrewPassword] = useState("");
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -99,24 +102,74 @@ export default function ImportRosterPage() {
     }
   };
 
-  const handleConfirmImport = () => {
+  const handleAutoSync = async () => {
+    if (!user || !ecrewEmail || !ecrewPassword) {
+      setError("Please provide eCrew credentials");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch('/api/ecrew/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          ecrewEmail,
+          ecrewPassword,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.flights) {
+        setPreviewData(data.flights);
+        setSuccess(true);
+        setShowAutoSync(false);
+      } else {
+        setError(data.error || data.message || 'Failed to sync with eCrew');
+      }
+    } catch (err: any) {
+      setError('Failed to sync: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
     if (!user) return;
 
-    // Store flights for this user
-    const userFlights = JSON.parse(localStorage.getItem(`flights_${user.id}`) || "[]");
-    const allFlights = [...userFlights, ...previewData];
+    try {
+      setLoading(true);
 
-    // Remove duplicates based on date and flight number
-    const uniqueFlights = allFlights.filter((flight, index, self) =>
-      index === self.findIndex(f =>
-        f.date === flight.date && f.flightNumber === flight.flightNumber
-      )
-    );
+      const response = await fetch('/api/flights', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.id,
+          flights: previewData,
+        }),
+      });
 
-    localStorage.setItem(`flights_${user.id}`, JSON.stringify(uniqueFlights));
+      const data = await response.json();
 
-    // Redirect to roster page
-    router.push('/roster');
+      if (data.success) {
+        // Redirect to roster page
+        router.push('/roster');
+      } else {
+        setError('Failed to save flights: ' + (data.error || 'Unknown error'));
+        setLoading(false);
+      }
+    } catch (err: any) {
+      setError('Failed to save flights: ' + err.message);
+      setLoading(false);
+    }
   };
 
   return (
@@ -138,28 +191,126 @@ export default function ImportRosterPage() {
             <p className="text-gray-600">Upload your eCrew roster file (CSV or Excel)</p>
           </div>
 
-          {/* Instructions */}
-          <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50/50 p-6">
-            <h3 className="font-bold text-blue-900 mb-3">How to export from eCrew:</h3>
-            <ol className="space-y-2 text-sm text-blue-800">
-              <li className="flex gap-2">
-                <span>1.</span>
-                <span>Go to <a href="https://ecrew.etihad.ae/ecrew" target="_blank" rel="noopener noreferrer" className="font-semibold underline">ecrew.etihad.ae</a></span>
-              </li>
-              <li className="flex gap-2">
-                <span>2.</span>
-                <span>Navigate to your roster/schedule page</span>
-              </li>
-              <li className="flex gap-2">
-                <span>3.</span>
-                <span>Export or download your roster as CSV or Excel</span>
-              </li>
-              <li className="flex gap-2">
-                <span>4.</span>
-                <span>Upload the file here</span>
-              </li>
-            </ol>
+          {/* Import Method Selection */}
+          <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button
+              onClick={() => setShowAutoSync(false)}
+              className={`rounded-2xl border-2 p-6 text-left transition-all ${
+                !showAutoSync
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 bg-white hover:border-blue-300'
+              }`}
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-3xl">📄</span>
+                <h3 className="font-bold text-gray-900">Manual Upload</h3>
+              </div>
+              <p className="text-sm text-gray-600">
+                Export CSV from eCrew and upload it here
+              </p>
+            </button>
+
+            <button
+              onClick={() => setShowAutoSync(true)}
+              className={`rounded-2xl border-2 p-6 text-left transition-all ${
+                showAutoSync
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 bg-white hover:border-blue-300'
+              }`}
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-3xl">🔄</span>
+                <h3 className="font-bold text-gray-900">Auto Sync</h3>
+              </div>
+              <p className="text-sm text-gray-600">
+                Sync directly from eCrew using your credentials
+              </p>
+            </button>
           </div>
+
+          {/* Auto Sync Section */}
+          {showAutoSync && !success && (
+            <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <span className="text-3xl">🔐</span>
+                <h3 className="font-bold text-gray-900">eCrew Login Credentials</h3>
+              </div>
+              <p className="text-sm text-gray-600 mb-4">
+                Enter your eCrew credentials to automatically sync your roster. Your credentials are not stored.
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    eCrew Email
+                  </label>
+                  <input
+                    type="email"
+                    value={ecrewEmail}
+                    onChange={(e) => setEcrewEmail(e.target.value)}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                    placeholder="your.email@etihad.ae"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    eCrew Password
+                  </label>
+                  <input
+                    type="password"
+                    value={ecrewPassword}
+                    onChange={(e) => setEcrewPassword(e.target.value)}
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 text-red-700 text-sm font-medium">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAutoSync}
+                  disabled={!ecrewEmail || !ecrewPassword || loading}
+                  className="w-full rounded-xl bg-blue-600 px-6 py-3 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? "Syncing with eCrew..." : "Sync Roster"}
+                </button>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs text-yellow-800">
+                  <span className="font-semibold">Note:</span> This feature is currently in development. Please use manual CSV upload for now.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Manual Upload Instructions */}
+          {!showAutoSync && !success && (
+            <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50/50 p-6">
+              <h3 className="font-bold text-blue-900 mb-3">How to export from eCrew:</h3>
+              <ol className="space-y-2 text-sm text-blue-800">
+                <li className="flex gap-2">
+                  <span>1.</span>
+                  <span>Go to <a href="https://ecrew.etihad.ae/ecrew" target="_blank" rel="noopener noreferrer" className="font-semibold underline">ecrew.etihad.ae</a></span>
+                </li>
+                <li className="flex gap-2">
+                  <span>2.</span>
+                  <span>Navigate to your roster/schedule page</span>
+                </li>
+                <li className="flex gap-2">
+                  <span>3.</span>
+                  <span>Export or download your roster as CSV or Excel</span>
+                </li>
+                <li className="flex gap-2">
+                  <span>4.</span>
+                  <span>Upload the file here</span>
+                </li>
+              </ol>
+            </div>
+          )}
 
           {/* CSV Format Guide */}
           <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-6">
@@ -194,8 +345,8 @@ export default function ImportRosterPage() {
             </div>
           </div>
 
-          {/* Upload Section */}
-          {!success && (
+          {/* Manual Upload Section */}
+          {!showAutoSync && !success && (
             <div className="mb-6 rounded-2xl border-2 border-dashed border-gray-300 bg-white p-8 text-center">
               <div className="text-6xl mb-4">📄</div>
               <div className="mb-4">

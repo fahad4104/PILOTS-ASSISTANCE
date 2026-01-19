@@ -30,48 +30,71 @@ export default function ApprovalsPage() {
     loadPendingUsers();
   }, [user, router]);
 
-  const loadPendingUsers = () => {
-    const pending = JSON.parse(localStorage.getItem("pendingUsers") || "[]");
-    setPendingUsers(pending);
+  const loadPendingUsers = async () => {
+    try {
+      const response = await fetch('/api/users/pending');
+      const data = await response.json();
 
-    // Initialize rank selection for each user
-    const ranks: { [key: string]: string } = {};
-    pending.forEach((u: PendingUser) => {
-      ranks[u.id] = "First Officer"; // Default rank
-    });
-    setSelectedRanks(ranks);
+      if (data.users) {
+        setPendingUsers(data.users);
+
+        // Initialize rank selection for each user
+        const ranks: { [key: string]: string } = {};
+        data.users.forEach((u: PendingUser) => {
+          ranks[u.id] = "First Officer"; // Default rank
+        });
+        setSelectedRanks(ranks);
+      }
+    } catch (error) {
+      console.error('Failed to load pending users:', error);
+    }
   };
 
-  const handleApprove = (userId: string) => {
-    const pending = JSON.parse(localStorage.getItem("pendingUsers") || "[]");
-    const approved = JSON.parse(localStorage.getItem("users") || "[]");
+  const handleApprove = async (userId: string) => {
+    try {
+      const response = await fetch('/api/users/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId,
+          rank: selectedRanks[userId] || "First Officer",
+        }),
+      });
 
-    const userToApprove = pending.find((u: PendingUser) => u.id === userId);
-    if (!userToApprove) return;
+      const data = await response.json();
 
-    // Add rank to user
-    const approvedUser = {
-      ...userToApprove,
-      rank: selectedRanks[userId] || "First Officer",
-      status: "approved",
-      approvedAt: new Date().toISOString(),
-    };
-
-    // Move from pending to approved
-    approved.push(approvedUser);
-    const updatedPending = pending.filter((u: PendingUser) => u.id !== userId);
-
-    localStorage.setItem("users", JSON.stringify(approved));
-    localStorage.setItem("pendingUsers", JSON.stringify(updatedPending));
-
-    loadPendingUsers();
+      if (data.success) {
+        loadPendingUsers();
+      } else {
+        console.error('Failed to approve user:', data.error);
+      }
+    } catch (error) {
+      console.error('Error approving user:', error);
+    }
   };
 
-  const handleReject = (userId: string) => {
-    const pending = JSON.parse(localStorage.getItem("pendingUsers") || "[]");
-    const updatedPending = pending.filter((u: PendingUser) => u.id !== userId);
-    localStorage.setItem("pendingUsers", JSON.stringify(updatedPending));
-    loadPendingUsers();
+  const handleReject = async (userId: string) => {
+    try {
+      const response = await fetch('/api/users/reject', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        loadPendingUsers();
+      } else {
+        console.error('Failed to reject user:', data.error);
+      }
+    } catch (error) {
+      console.error('Error rejecting user:', error);
+    }
   };
 
   const handleRankChange = (userId: string, rank: string) => {
@@ -108,9 +131,7 @@ export default function ApprovalsPage() {
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Users</div>
-              <div className="mt-2 text-3xl font-bold text-gray-900">
-                {JSON.parse(localStorage.getItem("users") || "[]").length}
-              </div>
+              <div className="mt-2 text-3xl font-bold text-gray-900">--</div>
             </div>
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="text-sm font-medium text-gray-500 uppercase tracking-wide">Admin Access</div>

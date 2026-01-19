@@ -39,43 +39,32 @@ export default function SignupPage() {
     }
 
     try {
-      // Get existing pending users
-      const pendingUsers = JSON.parse(localStorage.getItem("pendingUsers") || "[]");
+      const response = await fetch('/api/users/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          password: password,
+        }),
+      });
 
-      // Check if email already exists
-      const existingUsers = JSON.parse(localStorage.getItem("users") || "[]");
-      const emailExists = [...pendingUsers, ...existingUsers].some(
-        (u: any) => u.email === email
-      );
+      const data = await response.json();
 
-      if (emailExists) {
-        setError("Email already registered");
-        setLoading(false);
-        return;
+      if (data.success) {
+        setSuccess(true);
+
+        // Redirect to login after 3 seconds
+        setTimeout(() => {
+          router.push("/login");
+        }, 3000);
+      } else {
+        setError(data.error || "Registration failed. Please try again.");
       }
-
-      // Add new pending user
-      const newUser = {
-        id: Date.now().toString(),
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        password: password, // In production, this should be hashed
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      };
-
-      pendingUsers.push(newUser);
-      localStorage.setItem("pendingUsers", JSON.stringify(pendingUsers));
-
-      setSuccess(true);
-
-      // Redirect to login after 3 seconds
-      setTimeout(() => {
-        router.push("/login");
-      }, 3000);
-
-    } catch (err) {
-      setError("Registration failed. Please try again.");
+    } catch (err: any) {
+      setError("Registration failed: " + err.message);
     } finally {
       setLoading(false);
     }

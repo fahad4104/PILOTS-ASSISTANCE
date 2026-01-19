@@ -34,38 +34,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
-    // Demo admin account
-    if (email === "admin@example.com" && password === "admin123") {
-      const userData: User = {
-        id: "admin",
-        name: "Admin",
-        email: email,
-        rank: "Admin",
-      };
-      setUser(userData);
-      localStorage.setItem("user", JSON.stringify(userData));
-      return true;
+    try {
+      const response = await fetch('/api/users/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.user) {
+        const userData: User = {
+          id: data.user.id,
+          name: data.user.name,
+          email: data.user.email,
+          rank: data.user.rank || "Pilot",
+        };
+        setUser(userData);
+        localStorage.setItem("user", JSON.stringify(userData));
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('Login error:', error);
+      return false;
     }
-
-    // Check approved users
-    const approvedUsers = JSON.parse(localStorage.getItem("users") || "[]");
-    const user = approvedUsers.find(
-      (u: any) => u.email === email.toLowerCase() && u.password === password
-    );
-
-    if (user) {
-      const userData: User = {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        rank: user.rank || "Pilot",
-      };
-      setUser(userData);
-      localStorage.setItem("user", JSON.stringify(userData));
-      return true;
-    }
-
-    return false;
   };
 
   const logout = () => {

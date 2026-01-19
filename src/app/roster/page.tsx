@@ -25,11 +25,37 @@ export default function RosterPage() {
 
   useEffect(() => {
     if (user) {
-      // Load flights for this user from localStorage
-      const userFlights = JSON.parse(localStorage.getItem(`flights_${user.id}`) || "[]");
-      setFlights(userFlights);
+      loadFlights();
     }
   }, [user]);
+
+  const loadFlights = async () => {
+    if (!user) return;
+
+    try {
+      const response = await fetch(`/api/flights?userId=${user.id}`);
+      const data = await response.json();
+
+      if (data.flights) {
+        // Convert snake_case from database to camelCase for frontend
+        const formattedFlights = data.flights.map((f: any) => ({
+          id: f.id,
+          date: f.date,
+          flightNumber: f.flight_number,
+          departure: f.departure,
+          destination: f.destination,
+          departureTime: f.departure_time,
+          arrivalTime: f.arrival_time,
+          aircraft: f.aircraft,
+          status: f.status,
+          coPilot: f.co_pilot,
+        }));
+        setFlights(formattedFlights);
+      }
+    } catch (error) {
+      console.error('Failed to load flights:', error);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
