@@ -172,46 +172,11 @@ function parseFlightInfo(text: string): FlightInfo {
     info.ezfw = weightsMatch[4];
   }
 
-    // Extract route for runways: OMAA/31L ... RPLL/06
-  // Try multiple patterns to match different OFP formats
-  
-  // Pattern 1: With DCT: OMAA/31L DCT ... RPLL/06
-  let routeMatch = text.match(/([A-Z]{4})\/(\d{2}[LRC]?)\s+DCT[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
-  
-  // Pattern 2: Without DCT: LOWW/29 ADAMA2C ... OMAA/31L
-  if (!routeMatch) {
-    routeMatch = text.match(/([A-Z]{4})\/(\d{2}[LRC]?)\s+[A-Z0-9]+[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
-  }
-  
-  // Pattern 3: From route line specifically
-  if (!routeMatch) {
-    const routeLineMatch = text.match(/(?:ROUTE|ATS ROUTE|FPL)[\s\S]{0,50}([A-Z]{4})\/(\d{2}[LRC]?)[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
-    if (routeLineMatch) {
-      routeMatch = routeLineMatch;
-    }
-  }
-  
+  // Extract route for runways: OMAA/31L ... RPLL/06
+  const routeMatch = text.match(/([A-Z]{4})\/(\d{2}[LRC]?)\s+DCT[\s\S]+?([A-Z]{4})\/(\d{2}[LRC]?)/);
   if (routeMatch) {
     info.departureRunway = routeMatch[2];
     info.arrivalRunway = routeMatch[4];
-  }
-  
-  // Fallback: Search for departure and arrival runways separately
-  if (!info.departureRunway && info.departure) {
-    // Look for departure ICAO followed by runway
-    const depMatch = text.match(new RegExp(`${info.departure}.*?([A-Z]{4})\/(\d{2}[LRC]?)`, 'i'));
-    if (depMatch) info.departureRunway = depMatch[2];
-  }
-  
-  if (!info.arrivalRunway && info.destination) {
-    // Look for arrival ICAO followed by runway near the end of route
-    const arrMatches = text.match(new RegExp(`([A-Z]{4})\/(\d{2}[LRC]?)`, 'g'));
-    if (arrMatches && arrMatches.length > 1) {
-      // Last runway in route is usually arrival
-      const lastRunway = arrMatches[arrMatches.length - 1];
-      const lastMatch = lastRunway.match(/([A-Z]{4})\/(\d{2}[LRC]?)/);
-      if (lastMatch) info.arrivalRunway = lastMatch[2];
-    }
   }
 
   // Extract TRIP time: TRIP RPLL 59731 0738
@@ -255,13 +220,12 @@ function parseWeather(text: string, destICAO: string, altICAO: string): WeatherI
   // Look for TAF sections - pattern from actual OFP format
   // Format: "DESTINATION AIRPORT: RPLL/MNL ..." followed by "FT ..." (Forecast Terminal)
   if (destICAO) {
-        // Pattern 1: Look for "DESTINATION AIRPORT:" section, then find "FT " (Forecast Terminal)
+    // Pattern 1: Look for "DESTINATION AIRPORT:" section, then find "FT " (Forecast Terminal)
     const destSectionIndex = text.toUpperCase().indexOf("DESTINATION AIRPORT:");
     if (destSectionIndex >= 0) {
-      const destSection = text.substring(destSectionIndex, destSectionIndex + 5000);
-      // Look for FT in the destination section - updated pattern to match actual format
-      // Format: FT  011100 0112/0218 36007KT...
-      const ftMatch = destSection.match(/FT\s+\d{6}\s+\d{4}\/\d{4}[\s\S]{0,2000}?(?==|\n\n|DESTINATION\sALTERNATE|RPVM|VHHH|$)/i);
+      const destSection = text.substring(destSectionIndex);
+      // Look for FT in the destination section
+      const ftMatch = destSection.match(/FT\s+\d{6}\s+\d{6}\/\d{4}[\s\S]{0,2000}?(?==|\n\n|ALTERNATE|$)/i);
       if (ftMatch && ftMatch[0]) {
         const taf = ftMatch[0].replace(/\s+/g, " ").trim();
         weather.destinationTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
@@ -269,10 +233,10 @@ function parseWeather(text: string, destICAO: string, altICAO: string): WeatherI
       }
     }
     
-        // Pattern 2: If not found, look for FT near the ICAO code
+    // Pattern 2: If not found, look for FT near the ICAO code
     if (!weather.destinationTAF) {
       const ftMatch = text.match(new RegExp(
-        `${destICAO}[\\s\\S]{0,500}?(FT\\s+\\d{6}\\s+\\d{4}/\\d{4}[\\s\\S]{0,1500}?)(?==|\\n\\n|DESTINATION\\sALTERNATE|RPVM|VHHH|$)`,
+        `${destICAO}[\\s\\S]{0,2000}?(FT\\s+\\d{6}\\s+\\d{6}/\\d{4}[\\s\\S]{0,2000}?)(?==|\\n\\n|ALTERNATE|$)`,
         "i"
       ));
       if (ftMatch && ftMatch[1]) {
@@ -282,36 +246,7 @@ function parseWeather(text: string, destICAO: string, altICAO: string): WeatherI
       }
     }
     
-    // Pattern 3: Look for TAF with arrival time period
-    if (!weather.destinationTAF) {
-      // Try to extract all TAF data for the destination
-      const tafPattern = new RegExp(
-        `TAF\\s+${destICAO}\\s+\\d{6}Z[\\s\\S]{0,1500}?(?=\\n\\n|TAF\\s+[A-Z]{4}|TREND|$)`,
-        "i"
-      );
-      const destMatch = text.match(tafPattern);
-      if (destMatch) {
-        const taf = destMatch[0].replace(/\s+/g, " ").trim();
-        weather.destinationTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.destinationSummary = generateWeatherSummary(taf);
-      }
-    }
-    
-    // Pattern 4: Look for METAR if TAF not available
-    if (!weather.destinationTAF) {
-      const metarPattern = new RegExp(
-        `METAR\\s+${destICAO}\\s+\\d{6}Z[\\s\\S]{0,500}?(?=\\n|$|TAF|METAR\\s+[A-Z]{4})`,
-        "i"
-      );
-      const metarMatch = text.match(metarPattern);
-      if (metarMatch) {
-        const metar = metarMatch[0].replace(/\s+/g, " ").trim();
-        weather.destinationTAF = metar;
-        weather.destinationSummary = generateWeatherSummary(metar);
-      }
-    }
-    
-    // Pattern 5: Old pattern - look for TAF keyword near ICAO
+    // Pattern 3: Old pattern - look for TAF keyword
     if (!weather.destinationTAF) {
       const destTAFRegex = new RegExp(
         `${destICAO}[\\s\\S]{0,500}?TAF[\\s\\S]{0,1500}?(?=\\n\\n|[A-Z]{4}\\s+(?:METAR|TAF)|TREND|FC\\s|$|\\d{6}Z\\s)`,
@@ -326,14 +261,14 @@ function parseWeather(text: string, destICAO: string, altICAO: string): WeatherI
     }
   }
 
-    // Alternate TAF
+  // Alternate TAF
   if (altICAO) {
-        // Pattern 1: Look for "DESTINATION ALTERNATE:" section, then find "FT "
-    const altSectionIndex = text.toUpperCase().indexOf("DESTINATION ALTERNATE:");
+    // Pattern 1: Look for "ALTERNATE AIRPORT:" section, then find "FT "
+    const altSectionIndex = text.toUpperCase().indexOf("ALTERNATE AIRPORT:");
     if (altSectionIndex >= 0) {
-      const altSection = text.substring(altSectionIndex, altSectionIndex + 5000);
-      // Look for FT in the alternate section - updated pattern
-      const ftMatch = altSection.match(/FT\s+\d{6}\s+\d{4}\/\d{4}[\s\S]{0,2000}?(?==|\n\n|RPVM|VHHH|$)/i);
+      const altSection = text.substring(altSectionIndex);
+      // Look for FT in the alternate section
+      const ftMatch = altSection.match(/FT\s+\d{6}\s+\d{6}\/\d{4}[\s\S]{0,2000}?(?==|\n\n|$)/i);
       if (ftMatch && ftMatch[0]) {
         const taf = ftMatch[0].replace(/\s+/g, " ").trim();
         weather.alternateTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
@@ -341,10 +276,10 @@ function parseWeather(text: string, destICAO: string, altICAO: string): WeatherI
       }
     }
     
-        // Pattern 2: If not found, look for FT near the alternate ICAO code
+    // Pattern 2: If not found, look for FT near the alternate ICAO code
     if (!weather.alternateTAF) {
       const altFTMatch = text.match(new RegExp(
-        `${altICAO}[\\s\\S]{0,500}?(FT\\s+\\d{6}\\s+\\d{4}/\\d{4}[\\s\\S]{0,1500}?)(?==|\\n\\n|RPVM|VHHH|$)`,
+        `${altICAO}[\\s\\S]{0,2000}?(FT\\s+\\d{6}\\s+\\d{6}/\\d{4}[\\s\\S]{0,2000}?)(?==|\\n\\n|$)`,
         "i"
       ));
       if (altFTMatch && altFTMatch[1]) {
@@ -354,35 +289,7 @@ function parseWeather(text: string, destICAO: string, altICAO: string): WeatherI
       }
     }
     
-    // Pattern 3: Look for TAF with ICAO code
-    if (!weather.alternateTAF) {
-      const tafPattern = new RegExp(
-        `TAF\\s+${altICAO}\\s+\\d{6}Z[\\s\\S]{0,1500}?(?=\\n\\n|TAF\\s+[A-Z]{4}|TREND|$)`,
-        "i"
-      );
-      const altMatch = text.match(tafPattern);
-      if (altMatch) {
-        const taf = altMatch[0].replace(/\s+/g, " ").trim();
-        weather.alternateTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.alternateSummary = generateWeatherSummary(taf);
-      }
-    }
-    
-    // Pattern 4: Look for METAR if TAF not available
-    if (!weather.alternateTAF) {
-      const metarPattern = new RegExp(
-        `METAR\\s+${altICAO}\\s+\\d{6}Z[\\s\\S]{0,500}?(?=\\n|$|TAF|METAR\\s+[A-Z]{4})`,
-        "i"
-      );
-      const metarMatch = text.match(metarPattern);
-      if (metarMatch) {
-        const metar = metarMatch[0].replace(/\s+/g, " ").trim();
-        weather.alternateTAF = metar;
-        weather.alternateSummary = generateWeatherSummary(metar);
-      }
-    }
-    
-    // Pattern 5: Old pattern
+    // Pattern 3: Old pattern
     if (!weather.alternateTAF) {
       const altTAFRegex = new RegExp(
         `${altICAO}[\\s\\S]{0,500}?TAF[\\s\\S]{0,1500}?(?=\\n\\n|[A-Z]{4}\\s+(?:METAR|TAF)|TREND|FC\\s|$|\\d{6}Z\\s)`,
@@ -441,7 +348,7 @@ function generateWeatherSummary(taf: string): string {
   return parts.join(" • ") || "Conditions not specified";
 }
 
-function parseNotams(text: string, destICAO: string, altICAO: string, eta?: string): NotamInfo {
+function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo {
   const notams: NotamInfo = {
     destinationILS: [],
     destinationRunway: [],
@@ -453,205 +360,80 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta?: stri
 
   if (!destICAO) return notams;
 
-  // Parse ETA to get arrival time window (ETA ± 1 hour)
-  let etaMinutes: number | null = null;
-  let etaMinusHour: number | null = null;
-  let etaPlusHour: number | null = null;
-  
-  if (eta) {
-    const etaMatch = eta.match(/(\d{2})(\d{2})/);
-    if (etaMatch) {
-      const hours = parseInt(etaMatch[1]);
-      const mins = parseInt(etaMatch[2]);
-      etaMinutes = hours * 60 + mins;
-      etaMinusHour = etaMinutes - 60;
-      etaPlusHour = etaMinutes + 60;
-    }
-  }
-
-    // Helper function to check if NOTAM is valid at arrival time
-  const isValidAtArrival = (line: string): boolean => {
-    if (!etaMinutes) return true; // If no ETA, include all NOTAMs
-    
-    const upper = line.toUpperCase();
-    
-    // Extract NOTAM validity period
-    // Format examples:
-    // - "FROM 2601011200 TO 2601020800"
-    // - "01 0112 TO 02 0808"
-    // - "WEF 0112 TIL 0208"
-    // - "1413148 12100118 TO 14(04KN 12100508)" (OFP format)
-    
-    let fromTime: number | null = null;
-    let toTime: number | null = null;
-    
-    // Pattern 1: DDHHMM format: 1413148 12100118 TO ...
-    const pattern1 = upper.match(/(\d{2})(\d{2})(\d{2})\s+(\d{8})\s+TO\s+(\d{2})/);
-    if (pattern1) {
-      // Extract day and time from first part
-      fromTime = parseInt(pattern1[2]) * 60 + parseInt(pattern1[3]);
-      // We have day, hour, min from the full timestamp
-      // For simplicity, just check the hour/min part
-      const toPattern = upper.match(/TO\s+\d{2}[A-Z(]*\s*(\d{2})(\d{2})/);
-      if (toPattern) {
-        toTime = parseInt(toPattern[1]) * 60 + parseInt(toPattern[2]);
-      }
-    }
-    
-    // Pattern 2: FROM YYMMDDHHMM TO YYMMDDHHMM
-    if (!fromTime) {
-      const pattern2 = upper.match(/FROM\s+\d{6}(\d{2})(\d{2})\s+TO\s+\d{6}(\d{2})(\d{2})/);
-      if (pattern2) {
-        fromTime = parseInt(pattern2[1]) * 60 + parseInt(pattern2[2]);
-        toTime = parseInt(pattern2[3]) * 60 + parseInt(pattern2[4]);
-      }
-    }
-    
-    // Pattern 3: DD HHMM TO DD HHMM
-    if (!fromTime) {
-      const pattern3 = upper.match(/\d{2}\s+(\d{2})(\d{2})\s+TO\s+\d{2}\s+(\d{2})(\d{2})/);
-      if (pattern3) {
-        fromTime = parseInt(pattern3[1]) * 60 + parseInt(pattern3[2]);
-        toTime = parseInt(pattern3[3]) * 60 + parseInt(pattern3[4]);
-      }
-    }
-    
-    // Pattern 4: WEF HHMM TIL HHMM
-    if (!fromTime) {
-      const pattern4 = upper.match(/WEF\s+(\d{2})(\d{2})\s+TIL\s+(\d{2})(\d{2})/);
-      if (pattern4) {
-        fromTime = parseInt(pattern4[1]) * 60 + parseInt(pattern4[2]);
-        toTime = parseInt(pattern4[3]) * 60 + parseInt(pattern4[4]);
-      }
-    }
-    
-    // If we found time range, check if ETA is within it (considering ±1 hour buffer)
-    if (fromTime !== null && toTime !== null) {
-      // Handle day rollover (if toTime < fromTime, add 24 hours)
-      if (toTime < fromTime) toTime += 24 * 60;
-      
-      // Check if arrival window overlaps with NOTAM validity
-      // NOTAM is relevant if: (fromTime <= etaPlusHour) AND (toTime >= etaMinusHour)
-      return (fromTime <= etaPlusHour!) && (toTime >= etaMinusHour!);
-    }
-    
-    // If no time found, include the NOTAM (better safe than sorry)
-    return true;
-  };
-
-      console.log("=== NOTAM DEBUG ===");
-  console.log("Destination ICAO:", destICAO);
-  console.log("Alternate ICAO:", altICAO);
-  console.log("ETA:", eta);
-  console.log("ETA minutes:", etaMinutes);
-  console.log("Time window:", etaMinusHour, "to", etaPlusHour);
-
-  // Search for NOTAM section in text
-  const notamSectionIndex = text.toUpperCase().search(/NOTAM|\d[A-Z]{2}\d{3}\/\d{2}/);
-  console.log("NOTAM section found at index:", notamSectionIndex);
-  
-  if (notamSectionIndex >= 0) {
-    const sample = text.substring(notamSectionIndex, Math.min(text.length, notamSectionIndex + 500));
-    console.log("NOTAM section sample:", sample);
-  }
-
-  // Split by NOTAM reference (e.g., "1BE014/25") to get complete NOTAMs
-  // Pattern: Letter + 5 digits + slash + 2 digits
-  const notamPattern = /([A-Z0-9]{1,2}[A-Z]{1,2}\d{3,4}\/\d{2}[\s\S]{0,800}?)(?=[A-Z0-9]{1,2}[A-Z]{1,2}\d{3,4}\/\d{2}|Page|====|$)/gi;
-  const notamMatches = text.match(notamPattern) || [];
-  
-    console.log("Total NOTAM blocks found:", notamMatches.length);
-  if (notamMatches.length > 0 && notamMatches[0]) {
-    console.log("First NOTAM sample:", notamMatches[0].substring(0, 200));
-  }
-  
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   const seen = new Set<string>();
 
-  for (const notamBlock of notamMatches) {
-    const line = notamBlock.replace(/\s+/g, " ").trim();
+  for (const line of lines) {
     if (line.length < 20) continue;
     if (seen.has(line)) continue;
 
     const upper = line.toUpperCase();
-    
-    console.log("Checking NOTAM:", line.substring(0, 80));
 
     // Skip laser NOTAMs completely
     if (upper.includes("LASER") || upper.includes("LGT BEAM") || upper.includes("LIGHT BEAM")) {
       continue;
     }
 
-        // Destination NOTAMs - check if NOTAM contains destination ICAO
+    // Destination NOTAMs
     if (upper.includes(destICAO)) {
-      console.log("  -> Contains destination ICAO:", destICAO);
-      
-      // Check if NOTAM is valid at arrival time
-      if (!isValidAtArrival(line)) {
-        console.log("  -> Skipped: Not valid at arrival time");
-        continue;
-      }
-      
-      console.log("  -> Valid at arrival time");
-      
-                  // ILS/Approach
+      // ILS/Approach
       if (
         (upper.includes("ILS") || upper.includes("LOC") || upper.includes("GP") || 
-         upper.includes("APPROACH") || upper.includes("GLIDEPATH") || upper.includes("APCH"))
+         upper.includes("APPROACH") || upper.includes("GLIDEPATH")) &&
+        (upper.includes("U/S") || upper.includes("UNSERVICEABLE") || upper.includes("NOT AVBL") ||
+         upper.includes("SUSPENDED") || upper.includes("TEST") || upper.includes("WITHDRAWN") ||
+         upper.includes("NOT AVAILABLE"))
       ) {
-        notams.destinationILS.push(line.slice(0, 400));
+        notams.destinationILS.push(line.slice(0, 200));
         seen.add(line);
-        console.log("  -> Added to ILS/Approach");
         continue;
       }
 
-      // Runway - more lenient
-      if (upper.includes("RWY") || upper.includes("RUNWAY")) {
-        notams.destinationRunway.push(line.slice(0, 400));
+      // Runway
+      if (
+        (upper.includes("RWY") || upper.includes("RUNWAY")) &&
+        (upper.includes("CLSD") || upper.includes("CLOSED") || upper.includes("NOT AVBL") ||
+         upper.includes("WIP") || upper.includes("NOT AVAILABLE"))
+      ) {
+        notams.destinationRunway.push(line.slice(0, 200));
         seen.add(line);
-        console.log("  -> Added to Runway");
         continue;
       }
 
-      // Other (GPS, taxiway, crane, lighting, etc) - catch all for destination
-      notams.destinationOther.push(line.slice(0, 400));
-      seen.add(line);
-      console.log("  -> Added to Other");
+      // Other (GPS, taxiway, etc)
+      if (
+        upper.includes("GNSS") || upper.includes("GPS") || upper.includes("TWY") ||
+        upper.includes("TAXIWAY") || upper.includes("APRON")
+      ) {
+        notams.destinationOther.push(line.slice(0, 200));
+        seen.add(line);
+      }
     }
 
-            // Alternate NOTAMs
+    // Alternate NOTAMs
     if (altICAO && upper.includes(altICAO)) {
-      console.log("  -> Contains alternate ICAO:", altICAO);
-      
-      // Check if NOTAM is valid at arrival time
-      if (!isValidAtArrival(line)) {
-        console.log("  -> Skipped: Not valid at arrival time");
-        continue;
-      }
-      
-      if (upper.includes("ILS") || upper.includes("APPROACH") || upper.includes("APCH")) {
-        notams.alternateILS.push(line.slice(0, 400));
+      if (
+        (upper.includes("ILS") || upper.includes("APPROACH")) &&
+        (upper.includes("U/S") || upper.includes("NOT AVBL") || upper.includes("TEST"))
+      ) {
+        notams.alternateILS.push(line.slice(0, 200));
         seen.add(line);
-        console.log("  -> Added to alternate ILS");
         continue;
       }
 
-      if (upper.includes("RWY") || upper.includes("RUNWAY")) {
-        notams.alternateRunway.push(line.slice(0, 400));
+      if (
+        (upper.includes("RWY") || upper.includes("RUNWAY")) &&
+        (upper.includes("CLSD") || upper.includes("CLOSED") || upper.includes("NOT AVBL"))
+      ) {
+        notams.alternateRunway.push(line.slice(0, 200));
         seen.add(line);
-        console.log("  -> Added to alternate Runway");
         continue;
       }
 
-      notams.alternateOther.push(line.slice(0, 400));
+      notams.alternateOther.push(line.slice(0, 200));
       seen.add(line);
-      console.log("  -> Added to alternate Other");
     }
   }
-  
-  console.log("Total destination ILS NOTAMs:", notams.destinationILS.length);
-  console.log("Total destination Runway NOTAMs:", notams.destinationRunway.length);
-  console.log("Total destination Other NOTAMs:", notams.destinationOther.length);
-  console.log("=== END NOTAM DEBUG ===");
 
   return notams;
 }
@@ -813,12 +595,8 @@ export async function POST(req: Request) {
       );
     }
 
-        // Parse all information
+    // Parse all information
     const flight = parseFlightInfo(extracted.text);
-    
-    // Debug logging for weather section
-    console.log("=== WEATHER DEBUG ===");
-    console.log("Text length:", extracted.text.length);
     
     // Extract ICAO codes for weather and NOTAMs (they need 4-letter ICAO codes, not 3-letter IATA)
     let destICAO = "";
@@ -883,28 +661,8 @@ export async function POST(req: Request) {
       }
     }
     
-    console.log("Destination ICAO:", destICAO);
-    console.log("Alternate ICAO:", altICAO);
-    
-    // Search for weather keywords in text
-    const hasWeatherSection = extracted.text.toUpperCase().includes("WEATHER") || 
-                             extracted.text.toUpperCase().includes("TAF") ||
-                             extracted.text.toUpperCase().includes("METAR") ||
-                             extracted.text.match(/FT\s+\d{6}/);
-    console.log("Has weather keywords:", hasWeatherSection);
-    
-    // Extract a sample around weather keywords
-    const weatherIndex = extracted.text.toUpperCase().search(/WEATHER|TAF|METAR|FT\s+\d{6}/);
-    if (weatherIndex >= 0) {
-      const sample = extracted.text.substring(Math.max(0, weatherIndex - 100), Math.min(extracted.text.length, weatherIndex + 500));
-      console.log("Weather section sample:", sample);
-    }
-    
     const weather = parseWeather(extracted.text, destICAO, altICAO);
-    console.log("Destination TAF found:", weather.destinationTAF ? "YES" : "NO");
-    console.log("Alternate TAF found:", weather.alternateTAF ? "YES" : "NO");
-    console.log("=== END WEATHER DEBUG ===");
-    const notams = parseNotams(extracted.text, destICAO, altICAO, flight.eta);
+    const notams = parseNotams(extracted.text, destICAO, altICAO);
     const fuel = parseFuel(extracted.text);
     const windShear = parseWindShear(extracted.text);
     const mora = parseMORA(extracted.text);
