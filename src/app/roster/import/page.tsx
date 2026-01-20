@@ -28,7 +28,7 @@ export default function ImportRosterPage() {
   const [success, setSuccess] = useState(false);
   const [previewData, setPreviewData] = useState<Flight[]>([]);
   const [showAutoSync, setShowAutoSync] = useState(false);
-  const [ecrewEmail, setEcrewEmail] = useState("");
+  const [ecrewEmployeeId, setEcrewEmployeeId] = useState("");
   const [ecrewPassword, setEcrewPassword] = useState("");
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -103,7 +103,7 @@ export default function ImportRosterPage() {
   };
 
   const handleAutoSync = async () => {
-    if (!user || !ecrewEmail || !ecrewPassword) {
+    if (!user || !ecrewEmployeeId || !ecrewPassword) {
       setError("Please provide eCrew credentials");
       return;
     }
@@ -119,7 +119,7 @@ export default function ImportRosterPage() {
         },
         body: JSON.stringify({
           userId: user.id,
-          ecrewEmail,
+          ecrewEmployeeId,
           ecrewPassword,
         }),
       });
@@ -242,14 +242,14 @@ export default function ImportRosterPage() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    eCrew Email
+                    Employee ID (رقم الوظيفي)
                   </label>
                   <input
-                    type="email"
-                    value={ecrewEmail}
-                    onChange={(e) => setEcrewEmail(e.target.value)}
+                    type="text"
+                    value={ecrewEmployeeId}
+                    onChange={(e) => setEcrewEmployeeId(e.target.value)}
                     className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-                    placeholder="your.email@etihad.ae"
+                    placeholder="123456"
                   />
                 </div>
 
@@ -274,14 +274,14 @@ export default function ImportRosterPage() {
 
                 <button
                   onClick={handleAutoSync}
-                  disabled={!ecrewEmail || !ecrewPassword || loading}
+                  disabled={!ecrewEmployeeId || !ecrewPassword || loading}
                   className="w-full rounded-xl bg-blue-600 px-6 py-3 text-white font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? "Syncing with eCrew..." : "Sync Roster"}
                 </button>
 
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs text-yellow-800">
-                  <span className="font-semibold">Note:</span> This feature is currently in development. Please use manual CSV upload for now.
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">
+                  <span className="font-semibold">Note:</span> Your eCrew credentials are used only for this sync and are not stored on our servers.
                 </div>
               </div>
             </div>
