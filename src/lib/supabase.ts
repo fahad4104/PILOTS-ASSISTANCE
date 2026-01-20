@@ -1,9 +1,22 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Create a dummy client if env vars are missing (for build time)
+let supabase: SupabaseClient;
+
+if (supabaseUrl && supabaseAnonKey) {
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
+} else {
+  // Placeholder for build time - will be replaced at runtime
+  supabase = createClient('https://placeholder.supabase.co', 'placeholder-key');
+  if (typeof window !== 'undefined') {
+    console.warn('Supabase environment variables not configured');
+  }
+}
+
+export { supabase };
 
 export type User = {
   id: string;
