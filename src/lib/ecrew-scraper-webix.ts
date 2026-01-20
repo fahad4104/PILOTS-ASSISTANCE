@@ -262,14 +262,16 @@ export class EcrewScraperWebix {
         const flightData: any[] = [];
 
         // Try to find Webix datatable or grid
-        if (typeof $$ !== 'undefined') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const webixGlobal = (window as any).$$;
+        if (typeof webixGlobal !== 'undefined') {
           // Look for Webix datatables
           const datatables = document.querySelectorAll('[view_id]');
           for (const table of datatables) {
             try {
               const viewId = table.getAttribute('view_id');
               if (viewId) {
-                const webixTable = $$(viewId);
+                const webixTable = webixGlobal(viewId);
                 if (webixTable && typeof webixTable.data !== 'undefined') {
                   const data = webixTable.data.serialize();
                   if (data && data.length > 0) {
