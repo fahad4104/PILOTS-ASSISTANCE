@@ -11,7 +11,7 @@ type PendingUser = {
   email: string;
   password: string;
   status: string;
-  createdAt: string;
+  created_at: string;
 };
 
 export default function ApprovalsPage() {
@@ -167,7 +167,7 @@ export default function ApprovalsPage() {
                           </div>
                         </div>
                         <div className="text-xs text-gray-500">
-                          Registered: {new Date(pendingUser.createdAt).toLocaleString()}
+                          Registered: {pendingUser.created_at ? new Date(pendingUser.created_at).toLocaleString() : 'N/A'}
                         </div>
                       </div>
 
