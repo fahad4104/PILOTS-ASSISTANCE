@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#1e3a5f"/>
+  <g fill="#ffffff">
+    <!-- Airplane silhouette -->
+    <path d="M256 80c-8 0-16 4-20 12l-80 160c-4 8-4 16 0 24l20 40v80c0 8 4 16 12 20l60 30c8 4 16 4 24 0l60-30c8-4 12-12 12-20v-80l20-40c4-8 4-16 0-24l-80-160c-4-8-12-12-20-12h-8zm4 40l60 120h-120l60-120z"/>
+    <!-- Wings -->
+    <rect x="100" y="220" width="312" height="40" rx="8"/>
+  </g>
+  <!-- Pilot hat accent -->
+  <circle cx="256" cy="160" r="24" fill="#ffd700"/>
+</svg>
