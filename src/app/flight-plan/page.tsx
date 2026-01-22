@@ -105,7 +105,7 @@ function KV({ k, v, highlight }: { k: string; v?: string; highlight?: boolean })
 }
 
 // NotamItem type for typed NOTAM data
-type NotamItem = { text: string; validFrom?: string; validTo?: string; isRelevant: boolean } | string;
+type NotamItem = { text: string; validFrom?: string; validTo?: string; isRelevant?: boolean } | string;
 
 // Enhanced List Field with better visuals - supports both string[] and NotamItem[]
 function ListField({ label, items, type }: { label: string; items?: NotamItem[]; type?: "warning" | "info" | "default" }) {
@@ -115,8 +115,10 @@ function ListField({ label, items, type }: { label: string; items?: NotamItem[];
 
   // Helper to get text from item (handles both string and NotamItem)
   const getItemText = (item: NotamItem): string => {
+    if (!item) return "";
     if (typeof item === "string") return item;
-    return item.text;
+    if (typeof item === "object" && item.text) return item.text;
+    return String(item);
   };
 
   const getIcon = () => {

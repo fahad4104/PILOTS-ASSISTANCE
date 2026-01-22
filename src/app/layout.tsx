@@ -35,12 +35,8 @@ export const metadata: Metadata = {
     userScalable: false,
   },
   icons: {
-    icon: [
-      { url: "/icons/icon-512.png", type: "image/png", sizes: "512x512" },
-    ],
-    apple: [
-      { url: "/icons/icon-512.png", type: "image/png", sizes: "512x512" },
-    ],
+    icon: "/icon.png",
+    apple: "/icons/icon-512.png",
   },
 };
 
