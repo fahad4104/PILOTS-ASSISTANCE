@@ -478,8 +478,10 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
   // Track current NOTAM validity
   let currentValidFrom: Date | undefined;
   let currentValidTo: Date | undefined;
+  let currentValidityLine = "";
+  let currentNotamId = "";
 
-  // Raw text collectors
+  // Raw text collectors (only extracted NOTAMs)
   const rawDestLines: string[] = [];
   const rawAltLines: string[] = [];
 
@@ -540,18 +542,13 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
       }
     }
 
-    // Collect raw text for each section
-    if (currentSection === "destination") {
-      rawDestLines.push(line);
-    } else if (currentSection === "alternate") {
-      rawAltLines.push(line);
-    }
-
     // Check for NOTAM validity line: "1A6706/25  VALID: 02-OCT-25 2200 - 03-OCT-25 0300"
-    const validityMatch = line.match(/VALID:\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})\s*-\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})/i);
+    const validityMatch = line.match(/(\d[A-Z]\d+\/\d+)?\s*VALID:\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})\s*-\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})/i);
     if (validityMatch) {
-      currentValidFrom = parseNotamDate(validityMatch[1], flightDate);
-      currentValidTo = parseNotamDate(validityMatch[2], flightDate);
+      currentNotamId = validityMatch[1] || "";
+      currentValidFrom = parseNotamDate(validityMatch[2], flightDate);
+      currentValidTo = parseNotamDate(validityMatch[3], flightDate);
+      currentValidityLine = line;
       continue;
     }
 
@@ -598,9 +595,15 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
 
     seen.add(line);
 
+    // Build raw NOTAM text with validity info
+    const rawEntry = currentValidityLine
+      ? `${currentValidityLine}\n  ${line}\n`
+      : `${line}\n`;
+
     // Only add relevant NOTAMs
     if (isRelevant) {
       if (currentSection === "destination") {
+        rawDestLines.push(rawEntry);
         if (isILS) {
           notams.destinationILS.push(notamItem);
         } else if (isRunway) {
@@ -609,6 +612,7 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
           notams.destinationOther.push(notamItem);
         }
       } else if (currentSection === "alternate") {
+        rawAltLines.push(rawEntry);
         if (isILS) {
           notams.alternateILS.push(notamItem);
         } else if (isRunway) {
@@ -622,6 +626,8 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
     // Reset validity after using it
     currentValidFrom = undefined;
     currentValidTo = undefined;
+    currentValidityLine = "";
+    currentNotamId = "";
   }
 
   // Store raw text
