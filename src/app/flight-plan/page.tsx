@@ -5,6 +5,73 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 
 type Output = any;
 
+// Modal Component for showing raw NOTAM text
+function NotamModal({
+  isOpen,
+  onClose,
+  title,
+  content
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  content: string;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <div className="relative max-h-[80vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📋</span>
+            <h3 className="text-lg font-bold text-white">{title}</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg bg-white/20 p-2 text-white transition-colors hover:bg-white/30"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="max-h-[60vh] overflow-auto p-6">
+          {content ? (
+            <pre className="whitespace-pre-wrap rounded-xl bg-gray-900 p-4 font-mono text-sm leading-relaxed text-green-400">
+              {content}
+            </pre>
+          ) : (
+            <div className="text-center text-gray-500 py-8">
+              No NOTAM data available
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t border-gray-200 bg-gray-50 px-6 py-4">
+          <button
+            onClick={onClose}
+            className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-3 font-semibold text-white transition-all hover:from-blue-700 hover:to-blue-800"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Enhanced Card Component with gradient border
 function Card({ title, children, icon }: { title: string; children: React.ReactNode; icon?: string }) {
   return (
@@ -175,6 +242,21 @@ export default function FlightPlanPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
   const [data, setData] = useState<Output | null>(null);
+
+  // Modal state for raw NOTAM display
+  const [notamModal, setNotamModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    content: string;
+  }>({ isOpen: false, title: "", content: "" });
+
+  const openNotamModal = (title: string, content: string) => {
+    setNotamModal({ isOpen: true, title, content });
+  };
+
+  const closeNotamModal = () => {
+    setNotamModal({ isOpen: false, title: "", content: "" });
+  };
 
   async function analyze() {
     setErr("");
@@ -388,50 +470,66 @@ export default function FlightPlanPage() {
             </Card>
 
             {/* NOTAMs - Organized by Category */}
-            <Card title="Destination NOTAMs (Arrival-Relevant)" icon="📢">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <ListField 
-                  label="ILS / Approach" 
-                  items={data.notams?.destinationILS} 
-                  type={data.notams?.destinationILS?.length > 0 ? "warning" : "default"}
-                />
-                <ListField 
-                  label="Runway" 
-                  items={data.notams?.destinationRunway} 
-                  type={data.notams?.destinationRunway?.length > 0 ? "warning" : "default"}
-                />
-                <ListField 
-                  label="Other" 
-                  items={data.notams?.destinationOther} 
-                  type="info"
-                />
-              </div>
-            </Card>
-
-            {/* Alternate NOTAMs */}
-            {data.flight?.alternateAirport && (
-              <Card title="Alternate NOTAMs (Arrival-Relevant)" icon="🔄">
-                <div className="mb-4">
-                  <KV k="Alternate Airport" v={data.flight.alternateAirport} />
+            <div
+              onClick={() => openNotamModal("Destination NOTAMs - Original Text", data.notams?.rawDestinationNotams || "")}
+              className="cursor-pointer transition-transform hover:scale-[1.01]"
+            >
+              <Card title="Destination NOTAMs (Arrival-Relevant)" icon="📢">
+                <div className="mb-3 text-xs text-blue-600 font-medium">
+                  👆 Click to view original NOTAM text
                 </div>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <ListField 
-                    label="ILS / Approach" 
-                    items={data.notams?.alternateILS} 
-                    type={data.notams?.alternateILS?.length > 0 ? "warning" : "default"}
+                  <ListField
+                    label="ILS / Approach"
+                    items={data.notams?.destinationILS}
+                    type={data.notams?.destinationILS?.length > 0 ? "warning" : "default"}
                   />
-                  <ListField 
-                    label="Runway" 
-                    items={data.notams?.alternateRunway} 
-                    type={data.notams?.alternateRunway?.length > 0 ? "warning" : "default"}
+                  <ListField
+                    label="Runway"
+                    items={data.notams?.destinationRunway}
+                    type={data.notams?.destinationRunway?.length > 0 ? "warning" : "default"}
                   />
-                  <ListField 
-                    label="Other" 
-                    items={data.notams?.alternateOther} 
+                  <ListField
+                    label="Other"
+                    items={data.notams?.destinationOther}
                     type="info"
                   />
                 </div>
               </Card>
+            </div>
+
+            {/* Alternate NOTAMs */}
+            {data.flight?.alternateAirport && (
+              <div
+                onClick={() => openNotamModal("Alternate NOTAMs - Original Text", data.notams?.rawAlternateNotams || "")}
+                className="cursor-pointer transition-transform hover:scale-[1.01]"
+              >
+                <Card title="Alternate NOTAMs (Arrival-Relevant)" icon="🔄">
+                  <div className="mb-3 text-xs text-blue-600 font-medium">
+                    👆 Click to view original NOTAM text
+                  </div>
+                  <div className="mb-4">
+                    <KV k="Alternate Airport" v={data.flight.alternateAirport} />
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <ListField
+                      label="ILS / Approach"
+                      items={data.notams?.alternateILS}
+                      type={data.notams?.alternateILS?.length > 0 ? "warning" : "default"}
+                    />
+                    <ListField
+                      label="Runway"
+                      items={data.notams?.alternateRunway}
+                      type={data.notams?.alternateRunway?.length > 0 ? "warning" : "default"}
+                    />
+                    <ListField
+                      label="Other"
+                      items={data.notams?.alternateOther}
+                      type="info"
+                    />
+                  </div>
+                </Card>
+              </div>
             )}
 
             {/* Wind Shear */}
@@ -478,6 +576,14 @@ export default function FlightPlanPage() {
           </div>
         )}
       </div>
+
+      {/* NOTAM Modal */}
+      <NotamModal
+        isOpen={notamModal.isOpen}
+        onClose={closeNotamModal}
+        title={notamModal.title}
+        content={notamModal.content}
+      />
     </div>
     </ProtectedRoute>
   );

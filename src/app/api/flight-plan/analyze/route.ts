@@ -42,6 +42,8 @@ interface NotamInfo {
   alternateILS: string[];
   alternateRunway: string[];
   alternateOther: string[];
+  rawDestinationNotams: string;
+  rawAlternateNotams: string;
 }
 
 interface FuelInfo {
@@ -356,6 +358,8 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
     alternateILS: [],
     alternateRunway: [],
     alternateOther: [],
+    rawDestinationNotams: "",
+    rawAlternateNotams: "",
   };
 
   if (!destICAO) return notams;
@@ -365,6 +369,10 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
 
   // Section-based parsing: track which airport section we're in
   let currentSection: "destination" | "alternate" | "none" = "none";
+
+  // Raw text collectors
+  const rawDestLines: string[] = [];
+  const rawAltLines: string[] = [];
 
   // Patterns to detect section headers
   const destSectionPatterns = [
@@ -394,19 +402,24 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
 
   for (const line of lines) {
     const upper = line.toUpperCase();
+    let sectionChanged = false;
 
     // Check for section changes
     for (const pattern of destSectionPatterns) {
       if (pattern.test(line)) {
         currentSection = "destination";
+        sectionChanged = true;
         break;
       }
     }
 
-    for (const pattern of altSectionPatterns) {
-      if (pattern.test(line)) {
-        currentSection = "alternate";
-        break;
+    if (!sectionChanged) {
+      for (const pattern of altSectionPatterns) {
+        if (pattern.test(line)) {
+          currentSection = "alternate";
+          sectionChanged = true;
+          break;
+        }
       }
     }
 
@@ -418,7 +431,14 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
       }
     }
 
-    // Skip short lines, duplicates, and non-NOTAM content
+    // Collect raw text for each section (including headers and all content)
+    if (currentSection === "destination") {
+      rawDestLines.push(line);
+    } else if (currentSection === "alternate") {
+      rawAltLines.push(line);
+    }
+
+    // Skip short lines, duplicates, and non-NOTAM content for categorization
     if (line.length < 15) continue;
     if (seen.has(line)) continue;
     if (currentSection === "none") continue;
@@ -430,7 +450,7 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
 
     // Skip header/divider lines
     if (/^[+\-=]{10,}/.test(line)) continue;
-    if (/^\d[A-Z]\d+\/\d+\s+VALID:/.test(line)) continue; // NOTAM ID line (keep for reference but don't categorize)
+    if (/^\d[A-Z]\d+\/\d+\s+VALID:/.test(line)) continue;
 
     // Categorize the NOTAM based on content
     const isILS = (upper.includes("ILS") || upper.includes("LOC") || upper.includes("GP") ||
@@ -471,6 +491,10 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
       }
     }
   }
+
+  // Store raw text
+  notams.rawDestinationNotams = rawDestLines.join("\n");
+  notams.rawAlternateNotams = rawAltLines.join("\n");
 
   return notams;
 }
