@@ -363,75 +363,112 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   const seen = new Set<string>();
 
-  for (const line of lines) {
-    if (line.length < 20) continue;
-    if (seen.has(line)) continue;
+  // Section-based parsing: track which airport section we're in
+  let currentSection: "destination" | "alternate" | "none" = "none";
 
+  // Patterns to detect section headers
+  const destSectionPatterns = [
+    /DESTINATION\s+AIRPORT/i,
+    /DEST\s+NOTAM/i,
+    new RegExp(`${destICAO}\\s*\\/\\s*[A-Z]{3}`, "i"),  // LOWW /VIE format
+    new RegExp(`${destICAO}\\s+[A-Z]`, "i"),  // LOWW VIENNA format
+  ];
+
+  const altSectionPatterns = altICAO ? [
+    /ALTERNATE\s+AIRPORT/i,
+    /ALTN\s+NOTAM/i,
+    /ALTN:/i,
+    new RegExp(`${altICAO}\\s*\\/\\s*[A-Z]{3}`, "i"),
+    new RegExp(`${altICAO}\\s+[A-Z]`, "i"),
+  ] : [];
+
+  // Patterns that indicate end of NOTAM sections
+  const endSectionPatterns = [
+    /^={5,}/,  // ===== dividers
+    /WEATHER|METAR|TAF\s+/i,
+    /FUEL\s+SUMMARY/i,
+    /WIND\s+DATA/i,
+    /ATC\s+FLIGHT\s+PLAN/i,
+    /ROUTE\s+DATA/i,
+  ];
+
+  for (const line of lines) {
     const upper = line.toUpperCase();
 
-    // Skip laser NOTAMs completely
+    // Check for section changes
+    for (const pattern of destSectionPatterns) {
+      if (pattern.test(line)) {
+        currentSection = "destination";
+        break;
+      }
+    }
+
+    for (const pattern of altSectionPatterns) {
+      if (pattern.test(line)) {
+        currentSection = "alternate";
+        break;
+      }
+    }
+
+    // Check for end of NOTAM sections
+    for (const pattern of endSectionPatterns) {
+      if (pattern.test(line)) {
+        currentSection = "none";
+        break;
+      }
+    }
+
+    // Skip short lines, duplicates, and non-NOTAM content
+    if (line.length < 15) continue;
+    if (seen.has(line)) continue;
+    if (currentSection === "none") continue;
+
+    // Skip laser NOTAMs and general info lines
     if (upper.includes("LASER") || upper.includes("LGT BEAM") || upper.includes("LIGHT BEAM")) {
       continue;
     }
 
-    // Destination NOTAMs
-    if (upper.includes(destICAO)) {
-      // ILS/Approach
-      if (
-        (upper.includes("ILS") || upper.includes("LOC") || upper.includes("GP") || 
-         upper.includes("APPROACH") || upper.includes("GLIDEPATH")) &&
-        (upper.includes("U/S") || upper.includes("UNSERVICEABLE") || upper.includes("NOT AVBL") ||
-         upper.includes("SUSPENDED") || upper.includes("TEST") || upper.includes("WITHDRAWN") ||
-         upper.includes("NOT AVAILABLE"))
-      ) {
-        notams.destinationILS.push(line.slice(0, 200));
-        seen.add(line);
-        continue;
-      }
+    // Skip header/divider lines
+    if (/^[+\-=]{10,}/.test(line)) continue;
+    if (/^\d[A-Z]\d+\/\d+\s+VALID:/.test(line)) continue; // NOTAM ID line (keep for reference but don't categorize)
 
-      // Runway
-      if (
-        (upper.includes("RWY") || upper.includes("RUNWAY")) &&
-        (upper.includes("CLSD") || upper.includes("CLOSED") || upper.includes("NOT AVBL") ||
-         upper.includes("WIP") || upper.includes("NOT AVAILABLE"))
-      ) {
-        notams.destinationRunway.push(line.slice(0, 200));
-        seen.add(line);
-        continue;
-      }
+    // Categorize the NOTAM based on content
+    const isILS = (upper.includes("ILS") || upper.includes("LOC") || upper.includes("GP") ||
+                   upper.includes("APPROACH") || upper.includes("GLIDEPATH") || upper.includes("GS ")) &&
+                  (upper.includes("U/S") || upper.includes("UNSERVICEABLE") || upper.includes("NOT AVBL") ||
+                   upper.includes("SUSPENDED") || upper.includes("TEST") || upper.includes("WITHDRAWN") ||
+                   upper.includes("NOT AVAILABLE") || upper.includes("OUT OF SERVICE"));
 
-      // Other (GPS, taxiway, etc)
-      if (
-        upper.includes("GNSS") || upper.includes("GPS") || upper.includes("TWY") ||
-        upper.includes("TAXIWAY") || upper.includes("APRON")
-      ) {
-        notams.destinationOther.push(line.slice(0, 200));
-        seen.add(line);
-      }
-    }
+    const isRunway = (upper.includes("RWY") || upper.includes("RUNWAY")) &&
+                     (upper.includes("CLSD") || upper.includes("CLOSED") || upper.includes("NOT AVBL") ||
+                      upper.includes("WIP") || upper.includes("NOT AVAILABLE") || upper.includes("WORK IN PROGRESS"));
 
-    // Alternate NOTAMs
-    if (altICAO && upper.includes(altICAO)) {
-      if (
-        (upper.includes("ILS") || upper.includes("APPROACH")) &&
-        (upper.includes("U/S") || upper.includes("NOT AVBL") || upper.includes("TEST"))
-      ) {
-        notams.alternateILS.push(line.slice(0, 200));
-        seen.add(line);
-        continue;
-      }
+    const isOther = upper.includes("GNSS") || upper.includes("GPS") || upper.includes("TWY") ||
+                    upper.includes("TAXIWAY") || upper.includes("APRON") || upper.includes("VOR") ||
+                    upper.includes("NDB") || upper.includes("DME");
 
-      if (
-        (upper.includes("RWY") || upper.includes("RUNWAY")) &&
-        (upper.includes("CLSD") || upper.includes("CLOSED") || upper.includes("NOT AVBL"))
-      ) {
-        notams.alternateRunway.push(line.slice(0, 200));
-        seen.add(line);
-        continue;
-      }
+    // Only add if it matches a category
+    if (!isILS && !isRunway && !isOther) continue;
 
-      notams.alternateOther.push(line.slice(0, 200));
-      seen.add(line);
+    const notamText = line.slice(0, 250);
+    seen.add(line);
+
+    if (currentSection === "destination") {
+      if (isILS) {
+        notams.destinationILS.push(notamText);
+      } else if (isRunway) {
+        notams.destinationRunway.push(notamText);
+      } else if (isOther) {
+        notams.destinationOther.push(notamText);
+      }
+    } else if (currentSection === "alternate") {
+      if (isILS) {
+        notams.alternateILS.push(notamText);
+      } else if (isRunway) {
+        notams.alternateRunway.push(notamText);
+      } else if (isOther) {
+        notams.alternateOther.push(notamText);
+      }
     }
   }
 
