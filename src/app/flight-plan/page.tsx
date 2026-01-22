@@ -202,50 +202,116 @@ function WeatherCard({ title, taf, summary }: { title: string; taf: string; summ
   );
 }
 
-// Wind Shear Table Component
-function WindShearTable({ points }: { points: any[] }) {
-  if (!points || points.length === 0) {
-    return (
-      <div className="text-center text-sm text-gray-500 py-4">
-        No explicit turbulence/windshear section found.
-      </div>
-    );
+// Helper to get text from NotamItem
+function getNotamText(item: NotamItem): string {
+  if (!item) return "";
+  if (typeof item === "string") return item;
+  if (typeof item === "object" && item.text) return item.text;
+  return "";
+}
+
+// Generate summary text for download
+function generateSummaryText(data: Output): string {
+  const lines: string[] = [];
+  const divider = "═".repeat(50);
+
+  lines.push(divider);
+  lines.push("           FLIGHT BRIEF SUMMARY");
+  lines.push(divider);
+  lines.push("");
+
+  // Flight Info
+  lines.push(`Flight: ${data.flight?.flightNumber || "—"}`);
+  lines.push(`Date: ${data.flight?.date || "—"}`);
+  lines.push(`Route: ${data.flight?.departure || "—"} → ${data.flight?.destination || "—"}`);
+  lines.push(`Aircraft: ${data.flight?.aircraft || "—"} (${data.flight?.registration || "—"})`);
+  lines.push(`ETD: ${data.flight?.etd || "—"}  |  ETA: ${data.flight?.eta || "—"}`);
+  lines.push("");
+
+  // Runways
+  lines.push("─".repeat(50));
+  lines.push("RUNWAYS");
+  lines.push(`DEP RWY: ${data.flight?.departureRunway || "—"}`);
+  lines.push(`ARR RWY: ${data.flight?.arrivalRunway || "—"}`);
+  lines.push(`Alternate: ${data.flight?.alternateAirport || "—"} (${data.flight?.alternateTime || "—"})`);
+  lines.push("");
+
+  // Fuel
+  lines.push("─".repeat(50));
+  lines.push("FUEL");
+  lines.push(`Block Fuel: ${data.fuel?.blockFuel || "—"}`);
+  lines.push(`Trip Fuel: ${data.fuel?.trip || "—"}`);
+  lines.push(`Trip Time: ${data.fuel?.tripTime || "—"}`);
+  lines.push("");
+
+  // Destination NOTAMs
+  lines.push("─".repeat(50));
+  lines.push("DESTINATION NOTAMs");
+  const destILS = data.notams?.destinationILS || [];
+  const destRWY = data.notams?.destinationRunway || [];
+  const destOther = data.notams?.destinationOther || [];
+
+  if (destILS.length > 0) {
+    lines.push("  ILS/Approach:");
+    destILS.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+  }
+  if (destRWY.length > 0) {
+    lines.push("  Runway:");
+    destRWY.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+  }
+  if (destOther.length > 0) {
+    lines.push("  Other:");
+    destOther.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+  }
+  if (destILS.length === 0 && destRWY.length === 0 && destOther.length === 0) {
+    lines.push("  ✓ No relevant NOTAMs");
+  }
+  lines.push("");
+
+  // Alternate NOTAMs
+  if (data.flight?.alternateAirport) {
+    lines.push("─".repeat(50));
+    lines.push(`ALTERNATE NOTAMs (${data.flight.alternateAirport})`);
+    const altILS = data.notams?.alternateILS || [];
+    const altRWY = data.notams?.alternateRunway || [];
+    const altOther = data.notams?.alternateOther || [];
+
+    if (altILS.length > 0) {
+      lines.push("  ILS/Approach:");
+      altILS.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+    }
+    if (altRWY.length > 0) {
+      lines.push("  Runway:");
+      altRWY.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+    }
+    if (altOther.length > 0) {
+      lines.push("  Other:");
+      altOther.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+    }
+    if (altILS.length === 0 && altRWY.length === 0 && altOther.length === 0) {
+      lines.push("  ✓ No relevant NOTAMs");
+    }
+    lines.push("");
   }
 
-  return (
-    <div className="overflow-hidden rounded-xl border border-gray-200">
-      <table className="w-full">
-        <thead className="bg-gradient-to-r from-red-600 to-red-700 text-white">
-          <tr>
-            <th className="px-4 py-3 text-left text-sm font-semibold">Waypoint</th>
-            <th className="px-4 py-3 text-left text-sm font-semibold">Time (UTC)</th>
-            <th className="px-4 py-3 text-left text-sm font-semibold">Level</th>
-            <th className="px-4 py-3 text-left text-sm font-semibold">Shear Rate</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-200">
-          {points.map((point, idx) => (
-            <tr key={idx} className="hover:bg-gray-50 transition-colors">
-              <td className="px-4 py-3 font-mono font-semibold text-gray-900">{point.waypoint}</td>
-              <td className="px-4 py-3 font-mono text-gray-700">{point.time}</td>
-              <td className="px-4 py-3 font-mono text-gray-700">{point.level}</td>
-              <td className="px-4 py-3">
-                <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 font-bold ${
-                  point.shearRate >= 8 
-                    ? "bg-red-100 text-red-700" 
-                    : point.shearRate >= 7 
-                    ? "bg-orange-100 text-orange-700" 
-                    : "bg-yellow-100 text-yellow-700"
-                }`}>
-                  {point.shearRate}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  // Weather
+  lines.push("─".repeat(50));
+  lines.push("WEATHER");
+  if (data.weather?.destinationTAF) {
+    lines.push(`Destination TAF:`);
+    lines.push(`  ${data.weather.destinationTAF}`);
+  }
+  if (data.weather?.alternateTAF) {
+    lines.push(`Alternate TAF:`);
+    lines.push(`  ${data.weather.alternateTAF}`);
+  }
+  lines.push("");
+
+  lines.push(divider);
+  lines.push(`Generated: ${new Date().toISOString().slice(0, 19).replace("T", " ")} UTC`);
+  lines.push(divider);
+
+  return lines.join("\n");
 }
 
 export default function FlightPlanPage() {
@@ -543,33 +609,27 @@ export default function FlightPlanPage() {
               </div>
             )}
 
-            {/* Wind Shear */}
-            <Card title="Wind Shear / Turbulence (High Rate Areas)" icon="💨">
-              <WindShearTable points={data.windShear} />
-              {data.windShear && data.windShear.length > 0 && (
-                <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-                  <strong>Note:</strong> High wind shear areas detected. Review turbulence procedures.
-                </div>
-              )}
-            </Card>
-
-            {/* MORA */}
-            {data.mora && data.mora.length > 0 && (
-              <Card title="MORA Segments > 10,000 ft" icon="⛰️">
-                <div className="space-y-2">
-                  {data.mora.map((seg: any, idx: number) => (
-                    <div key={idx} className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
-                      <span className="font-mono font-semibold text-gray-900">{seg.segment}</span>
-                      <span className="mx-2 text-gray-400">→</span>
-                      <span className="font-semibold text-red-600">{seg.altitude} ft</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
-                  <strong>Note:</strong> Emergency escape brief may be required for segments above 10,000 ft.
-                </div>
-              </Card>
-            )}
+            {/* Download Summary Button */}
+            <div className="flex justify-center">
+              <button
+                onClick={() => {
+                  const summary = generateSummaryText(data);
+                  const blob = new Blob([summary], { type: "text/plain;charset=utf-8" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `FlightBrief_${data.flight?.flightNumber || "OFP"}_${data.flight?.date || "unknown"}.txt`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+                className="flex items-center gap-3 rounded-xl bg-gradient-to-r from-green-600 to-green-700 px-8 py-4 text-lg font-semibold text-white shadow-lg transition-all hover:from-green-700 hover:to-green-800 hover:shadow-xl"
+              >
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Download Flight Brief Summary
+              </button>
+            </div>
 
             {/* Parser Warnings (if any) */}
             {data.warnings && data.warnings.length > 0 && (
