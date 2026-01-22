@@ -35,13 +35,20 @@ interface WeatherInfo {
   alternateSummary: string;
 }
 
+interface NotamItem {
+  text: string;
+  validFrom?: Date;
+  validTo?: Date;
+  isRelevant: boolean;  // true if valid within ±1 hour of arrival
+}
+
 interface NotamInfo {
-  destinationILS: string[];
-  destinationRunway: string[];
-  destinationOther: string[];
-  alternateILS: string[];
-  alternateRunway: string[];
-  alternateOther: string[];
+  destinationILS: NotamItem[];
+  destinationRunway: NotamItem[];
+  destinationOther: NotamItem[];
+  alternateILS: NotamItem[];
+  alternateRunway: NotamItem[];
+  alternateOther: NotamItem[];
   rawDestinationNotams: string;
   rawAlternateNotams: string;
 }
@@ -350,7 +357,93 @@ function generateWeatherSummary(taf: string): string {
   return parts.join(" • ") || "Conditions not specified";
 }
 
-function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo {
+// Parse NOTAM validity date: "02-OCT-25 2200" -> Date
+function parseNotamDate(dateStr: string, flightDate: string): Date | undefined {
+  try {
+    // Format: DD-MMM-YY HHMM (e.g., "02-OCT-25 2200")
+    const match = dateStr.match(/(\d{2})-([A-Z]{3})-(\d{2})\s+(\d{4})/i);
+    if (!match) return undefined;
+
+    const [, day, monthStr, year, time] = match;
+    const months: { [key: string]: number } = {
+      JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+      JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
+    };
+
+    const month = months[monthStr.toUpperCase()];
+    if (month === undefined) return undefined;
+
+    const fullYear = 2000 + parseInt(year);
+    const hours = parseInt(time.slice(0, 2));
+    const minutes = parseInt(time.slice(2, 4));
+
+    return new Date(Date.UTC(fullYear, month, parseInt(day), hours, minutes));
+  } catch {
+    return undefined;
+  }
+}
+
+// Check if NOTAM is relevant (valid within ±1 hour of arrival time)
+function isNotamRelevant(validFrom: Date | undefined, validTo: Date | undefined, arrivalTime: Date | undefined): boolean {
+  if (!arrivalTime) return true; // If no arrival time, show all NOTAMs
+  if (!validFrom && !validTo) return true; // If no validity info, show NOTAM
+
+  const oneHour = 60 * 60 * 1000; // 1 hour in milliseconds
+  const arrivalMs = arrivalTime.getTime();
+
+  // NOTAM is relevant if:
+  // - It ends after (arrival - 1 hour) AND
+  // - It starts before (arrival + 1 hour)
+  const windowStart = arrivalMs - oneHour;
+  const windowEnd = arrivalMs + oneHour;
+
+  if (validTo && validTo.getTime() < windowStart) return false; // Ends before arrival window
+  if (validFrom && validFrom.getTime() > windowEnd) return false; // Starts after arrival window
+
+  return true;
+}
+
+// Parse ETA string to Date: "0450Z" with flight date "02Oct25"
+function parseETA(eta: string, flightDate: string): Date | undefined {
+  try {
+    if (!eta || !flightDate) return undefined;
+
+    // Parse flight date: "02Oct25" or "02OCT25"
+    const dateMatch = flightDate.match(/(\d{2})([A-Za-z]{3})(\d{2})/);
+    if (!dateMatch) return undefined;
+
+    const [, day, monthStr, year] = dateMatch;
+    const months: { [key: string]: number } = {
+      JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+      JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11
+    };
+
+    const month = months[monthStr.toUpperCase()];
+    if (month === undefined) return undefined;
+
+    // Parse ETA: "0450Z" or "0450"
+    const etaMatch = eta.match(/(\d{2})(\d{2})Z?/);
+    if (!etaMatch) return undefined;
+
+    const [, hours, minutes] = etaMatch;
+    const fullYear = 2000 + parseInt(year);
+
+    let arrivalDate = new Date(Date.UTC(fullYear, month, parseInt(day), parseInt(hours), parseInt(minutes)));
+
+    // If ETA hours < ETD hours, it means arrival is next day
+    // This is a simplification - in real cases we'd compare with ETD
+    if (parseInt(hours) < 12 && flightDate) {
+      // Likely next day arrival, add 1 day
+      arrivalDate = new Date(arrivalDate.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    return arrivalDate;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseNotams(text: string, destICAO: string, altICAO: string, eta: string, flightDate: string, alternateTime: string): NotamInfo {
   const notams: NotamInfo = {
     destinationILS: [],
     destinationRunway: [],
@@ -364,11 +457,27 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
 
   if (!destICAO) return notams;
 
+  // Calculate arrival times
+  const destArrival = parseETA(eta, flightDate);
+  let altArrival: Date | undefined;
+  if (destArrival && alternateTime) {
+    // Parse alternate time: "00:35" -> add to destination arrival
+    const altMatch = alternateTime.match(/(\d{2}):(\d{2})/);
+    if (altMatch) {
+      const altMinutes = parseInt(altMatch[1]) * 60 + parseInt(altMatch[2]);
+      altArrival = new Date(destArrival.getTime() + altMinutes * 60 * 1000);
+    }
+  }
+
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   const seen = new Set<string>();
 
   // Section-based parsing: track which airport section we're in
   let currentSection: "destination" | "alternate" | "none" = "none";
+
+  // Track current NOTAM validity
+  let currentValidFrom: Date | undefined;
+  let currentValidTo: Date | undefined;
 
   // Raw text collectors
   const rawDestLines: string[] = [];
@@ -378,8 +487,8 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
   const destSectionPatterns = [
     /DESTINATION\s+AIRPORT/i,
     /DEST\s+NOTAM/i,
-    new RegExp(`${destICAO}\\s*\\/\\s*[A-Z]{3}`, "i"),  // LOWW /VIE format
-    new RegExp(`${destICAO}\\s+[A-Z]`, "i"),  // LOWW VIENNA format
+    new RegExp(`${destICAO}\\s*\\/\\s*[A-Z]{3}`, "i"),
+    new RegExp(`${destICAO}\\s+[A-Z]`, "i"),
   ];
 
   const altSectionPatterns = altICAO ? [
@@ -392,7 +501,7 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
 
   // Patterns that indicate end of NOTAM sections
   const endSectionPatterns = [
-    /^={5,}/,  // ===== dividers
+    /^={5,}/,
     /WEATHER|METAR|TAF\s+/i,
     /FUEL\s+SUMMARY/i,
     /WIND\s+DATA/i,
@@ -431,26 +540,33 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
       }
     }
 
-    // Collect raw text for each section (including headers and all content)
+    // Collect raw text for each section
     if (currentSection === "destination") {
       rawDestLines.push(line);
     } else if (currentSection === "alternate") {
       rawAltLines.push(line);
     }
 
-    // Skip short lines, duplicates, and non-NOTAM content for categorization
+    // Check for NOTAM validity line: "1A6706/25  VALID: 02-OCT-25 2200 - 03-OCT-25 0300"
+    const validityMatch = line.match(/VALID:\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})\s*-\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})/i);
+    if (validityMatch) {
+      currentValidFrom = parseNotamDate(validityMatch[1], flightDate);
+      currentValidTo = parseNotamDate(validityMatch[2], flightDate);
+      continue;
+    }
+
+    // Skip short lines, duplicates, and non-NOTAM content
     if (line.length < 15) continue;
     if (seen.has(line)) continue;
     if (currentSection === "none") continue;
 
-    // Skip laser NOTAMs and general info lines
+    // Skip laser NOTAMs
     if (upper.includes("LASER") || upper.includes("LGT BEAM") || upper.includes("LIGHT BEAM")) {
       continue;
     }
 
     // Skip header/divider lines
     if (/^[+\-=]{10,}/.test(line)) continue;
-    if (/^\d[A-Z]\d+\/\d+\s+VALID:/.test(line)) continue;
 
     // Categorize the NOTAM based on content
     const isILS = (upper.includes("ILS") || upper.includes("LOC") || upper.includes("GP") ||
@@ -467,29 +583,45 @@ function parseNotams(text: string, destICAO: string, altICAO: string): NotamInfo
                     upper.includes("TAXIWAY") || upper.includes("APRON") || upper.includes("VOR") ||
                     upper.includes("NDB") || upper.includes("DME");
 
-    // Only add if it matches a category
     if (!isILS && !isRunway && !isOther) continue;
 
-    const notamText = line.slice(0, 250);
+    // Determine relevance based on arrival time
+    const arrivalTime = currentSection === "destination" ? destArrival : altArrival;
+    const isRelevant = isNotamRelevant(currentValidFrom, currentValidTo, arrivalTime);
+
+    const notamItem: NotamItem = {
+      text: line.slice(0, 250),
+      validFrom: currentValidFrom,
+      validTo: currentValidTo,
+      isRelevant,
+    };
+
     seen.add(line);
 
-    if (currentSection === "destination") {
-      if (isILS) {
-        notams.destinationILS.push(notamText);
-      } else if (isRunway) {
-        notams.destinationRunway.push(notamText);
-      } else if (isOther) {
-        notams.destinationOther.push(notamText);
-      }
-    } else if (currentSection === "alternate") {
-      if (isILS) {
-        notams.alternateILS.push(notamText);
-      } else if (isRunway) {
-        notams.alternateRunway.push(notamText);
-      } else if (isOther) {
-        notams.alternateOther.push(notamText);
+    // Only add relevant NOTAMs
+    if (isRelevant) {
+      if (currentSection === "destination") {
+        if (isILS) {
+          notams.destinationILS.push(notamItem);
+        } else if (isRunway) {
+          notams.destinationRunway.push(notamItem);
+        } else if (isOther) {
+          notams.destinationOther.push(notamItem);
+        }
+      } else if (currentSection === "alternate") {
+        if (isILS) {
+          notams.alternateILS.push(notamItem);
+        } else if (isRunway) {
+          notams.alternateRunway.push(notamItem);
+        } else if (isOther) {
+          notams.alternateOther.push(notamItem);
+        }
       }
     }
+
+    // Reset validity after using it
+    currentValidFrom = undefined;
+    currentValidTo = undefined;
   }
 
   // Store raw text
@@ -723,7 +855,14 @@ export async function POST(req: Request) {
     }
     
     const weather = parseWeather(extracted.text, destICAO, altICAO);
-    const notams = parseNotams(extracted.text, destICAO, altICAO);
+    const notams = parseNotams(
+      extracted.text,
+      destICAO,
+      altICAO,
+      flight.eta,
+      flight.date,
+      flight.alternateTime
+    );
     const fuel = parseFuel(extracted.text);
     const windShear = parseWindShear(extracted.text);
     const mora = parseMORA(extracted.text);

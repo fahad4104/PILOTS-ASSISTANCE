@@ -104,11 +104,20 @@ function KV({ k, v, highlight }: { k: string; v?: string; highlight?: boolean })
   );
 }
 
-// Enhanced List Field with better visuals
-function ListField({ label, items, type }: { label: string; items?: string[]; type?: "warning" | "info" | "default" }) {
+// NotamItem type for typed NOTAM data
+type NotamItem = { text: string; validFrom?: string; validTo?: string; isRelevant: boolean } | string;
+
+// Enhanced List Field with better visuals - supports both string[] and NotamItem[]
+function ListField({ label, items, type }: { label: string; items?: NotamItem[]; type?: "warning" | "info" | "default" }) {
   const [open, setOpen] = useState(false);
   const safe = items || [];
   const shown = open ? safe : safe.slice(0, 5);
+
+  // Helper to get text from item (handles both string and NotamItem)
+  const getItemText = (item: NotamItem): string => {
+    if (typeof item === "string") return item;
+    return item.text;
+  };
 
   const getIcon = () => {
     if (type === "warning") return "⚠️";
@@ -131,8 +140,8 @@ function ListField({ label, items, type }: { label: string; items?: string[]; ty
         </div>
         <div className="flex items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-            safe.length === 0 
-              ? "bg-green-100 text-green-700" 
+            safe.length === 0
+              ? "bg-green-100 text-green-700"
               : "bg-gray-200 text-gray-700"
           }`}>
             {safe.length}
@@ -141,10 +150,10 @@ function ListField({ label, items, type }: { label: string; items?: string[]; ty
       </div>
       <div className="mt-3 space-y-2">
         {shown.length ? (
-          shown.map((x, idx) => (
+          shown.map((item, idx) => (
             <div key={idx} className="flex items-start gap-2 text-sm leading-relaxed text-gray-700">
               <span className="mt-1 text-xs">•</span>
-              <span className="flex-1">{x}</span>
+              <span className="flex-1">{getItemText(item)}</span>
             </div>
           ))
         ) : (
@@ -155,7 +164,7 @@ function ListField({ label, items, type }: { label: string; items?: string[]; ty
         )}
       </div>
       {safe.length > 5 && (
-        <button 
+        <button
           className="mt-3 flex items-center gap-1 text-sm font-medium text-blue-600 transition-colors hover:text-blue-700"
           onClick={() => setOpen((s) => !s)}
         >
