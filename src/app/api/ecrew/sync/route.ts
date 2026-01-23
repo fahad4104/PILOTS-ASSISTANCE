@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { PrismaClient } from '@prisma/client';
 import { scrapeEcrewScheduleWebix, EcrewFlight } from '@/lib/ecrew-scraper-webix';
+
+const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,20 +47,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 2: Save flights to Supabase
+    // Step 2: Save flights to database
     try {
-      // First, delete existing flights for this user (optional - you might want to keep old data)
-      // Uncomment the following if you want to clear old flights before syncing
-      // const { error: deleteError } = await supabase
-      //   .from('flights')
-      //   .delete()
-      //   .eq('user_id', userId);
-      //
-      // if (deleteError) {
-      //   console.error('Error deleting old flights:', deleteError);
-      // }
-
-      // Transform the scraped flights to match Supabase schema
+      // Transform the scraped flights to match database schema
       // Filter out flights with missing required data
       const flightsToInsert = flights
         .filter((flight) => flight.date && flight.flightNumber)
@@ -85,35 +76,25 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Insert flights into Supabase
-      const { data, error: insertError } = await supabase
-        .from('flights')
-        .insert(flightsToInsert)
-        .select();
+      // Insert flights using Prisma
+      const insertedFlights = await prisma.flight.createMany({
+        data: flightsToInsert,
+        skipDuplicates: true,
+      });
 
-      if (insertError) {
-        console.error('Supabase insert error:', insertError);
-        console.error('Flights data that failed:', JSON.stringify(flightsToInsert, null, 2));
+      console.log(`Successfully saved ${insertedFlights.count} flights to database`);
 
-        // Return the scraped flights anyway so user can see what was found
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Failed to save flights to database',
-            details: insertError.message,
-            scrapedFlights: flights, // Return scraped data for debugging
-          },
-          { status: 500 }
-        );
-      }
-
-      console.log(`Successfully saved ${data?.length || 0} flights to Supabase`);
+      // Fetch the inserted flights to return
+      const savedFlights = await prisma.flight.findMany({
+        where: { user_id: userId },
+        orderBy: { date: 'asc' },
+      });
 
       return NextResponse.json({
         success: true,
-        message: `Successfully synced ${data?.length || 0} flights from eCrew`,
-        syncedCount: data?.length || 0,
-        flights: data,
+        message: `Successfully synced ${insertedFlights.count} flights from eCrew`,
+        syncedCount: insertedFlights.count,
+        flights: savedFlights,
       });
     } catch (dbError) {
       console.error('Database error:', dbError);
