@@ -1,6 +1,10 @@
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 
+// Configure chromium for serverless
+chromium.setHeadlessMode = true;
+chromium.setGraphicsMode = false;
+
 /**
  * Get Puppeteer launch options based on environment
  * In production (Vercel), we need special configuration for serverless
@@ -12,6 +16,8 @@ export async function getPuppeteerLaunchOptions() {
   if (isProduction || isVercel) {
     const chromiumPath = await chromium.executablePath();
 
+    console.log('Chromium path:', chromiumPath);
+
     // Production/Vercel configuration
     return {
       headless: chromium.headless,
@@ -19,15 +25,21 @@ export async function getPuppeteerLaunchOptions() {
         ...chromium.args,
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
-        '--single-process', // Important for serverless
+        '--single-process',
+        '--no-zygote',
       ],
       executablePath: chromiumPath,
+      defaultViewport: { width: 1920, height: 1080 },
     };
   }
 
   // Development configuration (Windows/Local)
+  // For puppeteer-core, we need to specify the Chrome path
+  const localChromePath = process.env.CHROME_PATH ||
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+
   return {
-    headless: false, // Set to false to see the browser for debugging
+    headless: false,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -35,6 +47,7 @@ export async function getPuppeteerLaunchOptions() {
       '--disable-web-security',
       '--disable-features=IsolateOrigins,site-per-process',
     ],
+    executablePath: localChromePath,
   };
 }
 
