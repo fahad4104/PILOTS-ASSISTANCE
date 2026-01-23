@@ -10,7 +10,6 @@
     "vercel-build": "npx prisma generate && npx prisma migrate deploy && next build"
   },
   "dependencies": {
-    "@sparticuz/chromium": "^131.0.0",
     "@prisma/client": "^6.19.1",
     "@supabase/supabase-js": "^2.90.1",
     "@vercel/blob": "^2.0.0",

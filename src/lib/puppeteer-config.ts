@@ -1,44 +1,39 @@
 import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
-
-// Configure chromium for serverless
-chromium.setHeadlessMode = true;
-chromium.setGraphicsMode = false;
 
 /**
- * Get Puppeteer launch options based on environment
- * In production (Vercel), we need special configuration for serverless
+ * Create a browser instance
+ * - Production (Vercel): Connect to Browserless.io remote browser
+ * - Development: Launch local Chrome
  */
-export async function getPuppeteerLaunchOptions() {
+export async function createBrowser() {
   const isProduction = process.env.NODE_ENV === 'production';
   const isVercel = process.env.VERCEL === '1';
 
   if (isProduction || isVercel) {
-    const chromiumPath = await chromium.executablePath();
+    // Use Browserless.io in production
+    const browserlessApiKey = process.env.BROWSERLESS_API_KEY;
 
-    console.log('Chromium path:', chromiumPath);
+    if (!browserlessApiKey) {
+      throw new Error('BROWSERLESS_API_KEY environment variable is not set');
+    }
 
-    // Production/Vercel configuration
-    return {
-      headless: chromium.headless,
-      args: [
-        ...chromium.args,
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--single-process',
-        '--no-zygote',
-      ],
-      executablePath: chromiumPath,
-      defaultViewport: { width: 1920, height: 1080 },
-    };
+    console.log('Connecting to Browserless.io...');
+
+    const browser = await puppeteer.connect({
+      browserWSEndpoint: `wss://chrome.browserless.io?token=${browserlessApiKey}`,
+    });
+
+    console.log('Connected to Browserless.io');
+    return browser;
   }
 
-  // Development configuration (Windows/Local)
-  // For puppeteer-core, we need to specify the Chrome path
+  // Development: Launch local Chrome
   const localChromePath = process.env.CHROME_PATH ||
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
-  return {
+  console.log('Launching local Chrome...');
+
+  return await puppeteer.launch({
     headless: false,
     args: [
       '--no-sandbox',
@@ -48,13 +43,5 @@ export async function getPuppeteerLaunchOptions() {
       '--disable-features=IsolateOrigins,site-per-process',
     ],
     executablePath: localChromePath,
-  };
-}
-
-/**
- * Create a browser instance with proper configuration
- */
-export async function createBrowser() {
-  const options = await getPuppeteerLaunchOptions();
-  return await puppeteer.launch(options);
+  });
 }
