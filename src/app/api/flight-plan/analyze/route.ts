@@ -37,6 +37,7 @@ interface WeatherInfo {
 
 interface NotamItem {
   text: string;
+  rawText: string;  // Original full NOTAM text with ID and validity
   validFrom?: Date;
   validTo?: Date;
   isRelevant: boolean;  // true if valid within ±1 hour of arrival
@@ -475,15 +476,91 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
   // Section-based parsing: track which airport section we're in
   let currentSection: "destination" | "alternate" | "none" = "none";
 
-  // Track current NOTAM validity
+  // Track current NOTAM being collected
   let currentValidFrom: Date | undefined;
   let currentValidTo: Date | undefined;
-  let currentValidityLine = "";
+  let currentNotamLines: string[] = [];  // Collect all lines of current NOTAM
   let currentNotamId = "";
+  let collectingNotam = false;
 
   // Raw text collectors (only extracted NOTAMs)
   const rawDestLines: string[] = [];
   const rawAltLines: string[] = [];
+
+  // Helper to process collected NOTAM
+  const processCollectedNotam = () => {
+    if (currentNotamLines.length === 0) return;
+
+    const fullNotamText = currentNotamLines.join("\n");
+    const upperText = fullNotamText.toUpperCase();
+
+    // Categorize the NOTAM based on content
+    const isILS = (upperText.includes("ILS") || upperText.includes("LOC") || upperText.includes("GP") ||
+                   upperText.includes("APPROACH") || upperText.includes("GLIDEPATH") || upperText.includes("GS ")) &&
+                  (upperText.includes("U/S") || upperText.includes("UNSERVICEABLE") || upperText.includes("NOT AVBL") ||
+                   upperText.includes("SUSPENDED") || upperText.includes("TEST") || upperText.includes("WITHDRAWN") ||
+                   upperText.includes("NOT AVAILABLE") || upperText.includes("OUT OF SERVICE"));
+
+    const isRunway = (upperText.includes("RWY") || upperText.includes("RUNWAY")) &&
+                     (upperText.includes("CLSD") || upperText.includes("CLOSED") || upperText.includes("NOT AVBL") ||
+                      upperText.includes("WIP") || upperText.includes("NOT AVAILABLE") || upperText.includes("WORK IN PROGRESS"));
+
+    const isOther = upperText.includes("GNSS") || upperText.includes("GPS") || upperText.includes("TWY") ||
+                    upperText.includes("TAXIWAY") || upperText.includes("APRON") || upperText.includes("VOR") ||
+                    upperText.includes("NDB") || upperText.includes("DME");
+
+    if (!isILS && !isRunway && !isOther) {
+      currentNotamLines = [];
+      currentValidFrom = undefined;
+      currentValidTo = undefined;
+      collectingNotam = false;
+      return;
+    }
+
+    // Determine relevance based on arrival time
+    const arrivalTime = currentSection === "destination" ? destArrival : altArrival;
+    const isRelevant = isNotamRelevant(currentValidFrom, currentValidTo, arrivalTime);
+
+    // Get first content line for display text
+    const firstContentLine = currentNotamLines.find(l => !l.includes("VALID:")) || currentNotamLines[0] || "";
+
+    const notamItem: NotamItem = {
+      text: firstContentLine.slice(0, 250),
+      rawText: fullNotamText,
+      validFrom: currentValidFrom,
+      validTo: currentValidTo,
+      isRelevant,
+    };
+
+    // Only add relevant NOTAMs
+    if (isRelevant) {
+      if (currentSection === "destination") {
+        rawDestLines.push(fullNotamText + "\n");
+        if (isILS) {
+          notams.destinationILS.push(notamItem);
+        } else if (isRunway) {
+          notams.destinationRunway.push(notamItem);
+        } else if (isOther) {
+          notams.destinationOther.push(notamItem);
+        }
+      } else if (currentSection === "alternate") {
+        rawAltLines.push(fullNotamText + "\n");
+        if (isILS) {
+          notams.alternateILS.push(notamItem);
+        } else if (isRunway) {
+          notams.alternateRunway.push(notamItem);
+        } else if (isOther) {
+          notams.alternateOther.push(notamItem);
+        }
+      }
+    }
+
+    // Reset
+    currentNotamLines = [];
+    currentValidFrom = undefined;
+    currentValidTo = undefined;
+    collectingNotam = false;
+  };
 
   // Patterns to detect section headers
   const destSectionPatterns = [
@@ -518,6 +595,10 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
     // Check for section changes
     for (const pattern of destSectionPatterns) {
       if (pattern.test(line)) {
+        // Process any collected NOTAM before changing section
+        if (currentSection !== "destination") {
+          processCollectedNotam();
+        }
         currentSection = "destination";
         sectionChanged = true;
         break;
@@ -527,6 +608,10 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
     if (!sectionChanged) {
       for (const pattern of altSectionPatterns) {
         if (pattern.test(line)) {
+          // Process any collected NOTAM before changing section
+          if (currentSection !== "alternate") {
+            processCollectedNotam();
+          }
           currentSection = "alternate";
           sectionChanged = true;
           break;
@@ -537,6 +622,8 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
     // Check for end of NOTAM sections
     for (const pattern of endSectionPatterns) {
       if (pattern.test(line)) {
+        // Process any collected NOTAM before changing section
+        processCollectedNotam();
         currentSection = "none";
         break;
       }
@@ -545,90 +632,48 @@ function parseNotams(text: string, destICAO: string, altICAO: string, eta: strin
     // Check for NOTAM validity line: "1A6706/25  VALID: 02-OCT-25 2200 - 03-OCT-25 0300"
     const validityMatch = line.match(/(\d[A-Z]\d+\/\d+)?\s*VALID:\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})\s*-\s*(\d{2}-[A-Z]{3}-\d{2}\s+\d{4})/i);
     if (validityMatch) {
+      // Process previous NOTAM if any
+      processCollectedNotam();
+
+      // Start new NOTAM
       currentNotamId = validityMatch[1] || "";
       currentValidFrom = parseNotamDate(validityMatch[2], flightDate);
       currentValidTo = parseNotamDate(validityMatch[3], flightDate);
-      currentValidityLine = line;
+      currentNotamLines = [line];  // Start with validity line
+      collectingNotam = true;
       continue;
     }
 
-    // Skip short lines, duplicates, and non-NOTAM content
+    // If collecting a NOTAM, add continuation lines
+    if (collectingNotam && currentSection !== "none") {
+      // Skip laser NOTAMs
+      if (upper.includes("LASER") || upper.includes("LGT BEAM") || upper.includes("LIGHT BEAM")) {
+        processCollectedNotam();
+        continue;
+      }
+
+      // Skip header/divider lines
+      if (/^[+\-=]{10,}/.test(line)) {
+        processCollectedNotam();
+        continue;
+      }
+
+      // Add line to current NOTAM (even short lines that might be continuations)
+      if (line.length >= 3 && !seen.has(line)) {
+        currentNotamLines.push(line);
+        seen.add(line);
+      }
+      continue;
+    }
+
+    // Skip non-NOTAM content when not collecting
     if (line.length < 15) continue;
     if (seen.has(line)) continue;
     if (currentSection === "none") continue;
-
-    // Skip laser NOTAMs
-    if (upper.includes("LASER") || upper.includes("LGT BEAM") || upper.includes("LIGHT BEAM")) {
-      continue;
-    }
-
-    // Skip header/divider lines
-    if (/^[+\-=]{10,}/.test(line)) continue;
-
-    // Categorize the NOTAM based on content
-    const isILS = (upper.includes("ILS") || upper.includes("LOC") || upper.includes("GP") ||
-                   upper.includes("APPROACH") || upper.includes("GLIDEPATH") || upper.includes("GS ")) &&
-                  (upper.includes("U/S") || upper.includes("UNSERVICEABLE") || upper.includes("NOT AVBL") ||
-                   upper.includes("SUSPENDED") || upper.includes("TEST") || upper.includes("WITHDRAWN") ||
-                   upper.includes("NOT AVAILABLE") || upper.includes("OUT OF SERVICE"));
-
-    const isRunway = (upper.includes("RWY") || upper.includes("RUNWAY")) &&
-                     (upper.includes("CLSD") || upper.includes("CLOSED") || upper.includes("NOT AVBL") ||
-                      upper.includes("WIP") || upper.includes("NOT AVAILABLE") || upper.includes("WORK IN PROGRESS"));
-
-    const isOther = upper.includes("GNSS") || upper.includes("GPS") || upper.includes("TWY") ||
-                    upper.includes("TAXIWAY") || upper.includes("APRON") || upper.includes("VOR") ||
-                    upper.includes("NDB") || upper.includes("DME");
-
-    if (!isILS && !isRunway && !isOther) continue;
-
-    // Determine relevance based on arrival time
-    const arrivalTime = currentSection === "destination" ? destArrival : altArrival;
-    const isRelevant = isNotamRelevant(currentValidFrom, currentValidTo, arrivalTime);
-
-    const notamItem: NotamItem = {
-      text: line.slice(0, 250),
-      validFrom: currentValidFrom,
-      validTo: currentValidTo,
-      isRelevant,
-    };
-
-    seen.add(line);
-
-    // Build raw NOTAM text with validity info
-    const rawEntry = currentValidityLine
-      ? `${currentValidityLine}\n  ${line}\n`
-      : `${line}\n`;
-
-    // Only add relevant NOTAMs
-    if (isRelevant) {
-      if (currentSection === "destination") {
-        rawDestLines.push(rawEntry);
-        if (isILS) {
-          notams.destinationILS.push(notamItem);
-        } else if (isRunway) {
-          notams.destinationRunway.push(notamItem);
-        } else if (isOther) {
-          notams.destinationOther.push(notamItem);
-        }
-      } else if (currentSection === "alternate") {
-        rawAltLines.push(rawEntry);
-        if (isILS) {
-          notams.alternateILS.push(notamItem);
-        } else if (isRunway) {
-          notams.alternateRunway.push(notamItem);
-        } else if (isOther) {
-          notams.alternateOther.push(notamItem);
-        }
-      }
-    }
-
-    // Reset validity after using it
-    currentValidFrom = undefined;
-    currentValidTo = undefined;
-    currentValidityLine = "";
-    currentNotamId = "";
   }
+
+  // Process last collected NOTAM
+  processCollectedNotam();
 
   // Store raw text
   notams.rawDestinationNotams = rawDestLines.join("\n");

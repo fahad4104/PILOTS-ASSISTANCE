@@ -5,6 +5,15 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 
 type Output = any;
 
+// Helper to safely convert any value to a displayable string
+function safeString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(v => safeString(v)).join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
 // Modal Component for showing raw NOTAM text
 function NotamModal({
   isOpen,
@@ -46,9 +55,9 @@ function NotamModal({
         </div>
 
         {/* Content */}
-        <div className="max-h-[60vh] overflow-auto p-6">
+        <div className="max-h-[60vh] overflow-auto p-6 bg-gray-50">
           {content ? (
-            <pre className="whitespace-pre-wrap rounded-xl bg-gray-900 p-4 font-mono text-sm leading-relaxed text-green-400">
+            <pre className="whitespace-pre-wrap rounded-xl bg-white border border-gray-200 p-5 font-mono text-base leading-relaxed text-gray-800 shadow-inner">
               {content}
             </pre>
           ) : (
@@ -89,26 +98,56 @@ function Card({ title, children, icon }: { title: string; children: React.ReactN
 }
 
 // Enhanced KV Component with better styling
-function KV({ k, v, highlight }: { k: string; v?: string; highlight?: boolean }) {
+function KV({ k, v, highlight }: { k: string; v?: string | string[] | unknown; highlight?: boolean }) {
+  // Safely convert value to string to prevent React rendering errors
+  const displayValue = (() => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "string") return v;
+    if (Array.isArray(v)) return v.join(", ");
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  })();
+
   return (
     <div className={`rounded-xl border p-4 transition-all ${
-      highlight 
-        ? "border-blue-200 bg-blue-50/50" 
+      highlight
+        ? "border-blue-200 bg-blue-50/50"
         : "border-gray-200 bg-gray-50/50 hover:border-gray-300"
     }`}>
       <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">{k}</div>
       <div className={`mt-2 font-semibold ${highlight ? "text-blue-900 text-lg" : "text-gray-900"}`}>
-        {v && v.length ? v : "—"}
+        {displayValue.length ? displayValue : "—"}
       </div>
     </div>
   );
 }
 
 // NotamItem type for typed NOTAM data
-type NotamItem = { text: string; validFrom?: string; validTo?: string; isRelevant?: boolean } | string;
+type NotamItem = { text: string; rawText?: string; validFrom?: string; validTo?: string; isRelevant?: boolean } | string;
+
+// Helper to get raw/original NOTAM text for modal display
+function getRawNotamText(item: NotamItem): string {
+  if (!item) return "";
+  if (typeof item === "string") return item;
+  if (typeof item === "object") {
+    // Prefer rawText (original), fallback to text
+    return item.rawText || item.text || "";
+  }
+  return String(item);
+}
 
 // Enhanced List Field with better visuals - supports both string[] and NotamItem[]
-function ListField({ label, items, type }: { label: string; items?: NotamItem[]; type?: "warning" | "info" | "default" }) {
+function ListField({
+  label,
+  items,
+  type,
+  onCardClick
+}: {
+  label: string;
+  items?: NotamItem[];
+  type?: "warning" | "info" | "default";
+  onCardClick?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const safe = items || [];
   const shown = open ? safe : safe.slice(0, 5);
@@ -133,12 +172,22 @@ function ListField({ label, items, type }: { label: string; items?: NotamItem[];
     return "border-gray-200 bg-gray-50/50";
   };
 
+  const isClickable = onCardClick && safe.length > 0;
+
   return (
-    <div className={`rounded-xl border p-4 ${getBorderColor()}`}>
+    <div
+      className={`rounded-xl border p-4 ${getBorderColor()} ${
+        isClickable ? "cursor-pointer transition-transform hover:scale-[1.02] hover:shadow-md" : ""
+      }`}
+      onClick={isClickable ? onCardClick : undefined}
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span>{getIcon()}</span>
           <div className="text-sm font-semibold text-gray-700">{label}</div>
+          {isClickable && (
+            <span className="text-xs text-blue-600">👆</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -178,21 +227,25 @@ function ListField({ label, items, type }: { label: string; items?: NotamItem[];
 }
 
 // Weather Display Component
-function WeatherCard({ title, taf, summary }: { title: string; taf: string; summary: string }) {
+function WeatherCard({ title, taf, summary }: { title: string; taf: unknown; summary: unknown }) {
+  // Safely convert to string to prevent React rendering errors
+  const safeTaf = typeof taf === "string" ? taf : (taf ? String(taf) : "");
+  const safeSummary = typeof summary === "string" ? summary : (summary ? String(summary) : "");
+
   return (
     <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-5">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-2xl">🌤️</span>
         <h4 className="font-semibold text-gray-900">{title}</h4>
       </div>
-      {taf ? (
+      {safeTaf ? (
         <>
           <div className="mb-3 rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400">
-            {taf}
+            {safeTaf}
           </div>
           <div className="text-sm text-gray-700">
             <span className="font-semibold">Summary: </span>
-            {summary || "N/A"}
+            {safeSummary || "N/A"}
           </div>
         </>
       ) : (
@@ -364,7 +417,8 @@ export default function FlightPlanPage() {
 
       setData(json);
     } catch (e: any) {
-      setErr(String(e?.message || e));
+      const errorMsg = e?.message || e;
+      setErr(typeof errorMsg === "string" ? errorMsg : JSON.stringify(errorMsg));
     } finally {
       setLoading(false);
     }
@@ -456,7 +510,7 @@ export default function FlightPlanPage() {
                   FLIGHT NUMBER
                 </label>
                 <div className="w-full rounded-lg border border-blue-200 bg-white px-4 py-3 text-base font-semibold text-blue-900">
-                  {data.flight?.flightNumber || "—"}
+                  {safeString(data.flight?.flightNumber) || "—"}
                 </div>
               </div>
 
@@ -466,7 +520,7 @@ export default function FlightPlanPage() {
                   DATE
                 </label>
                 <div className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-base font-semibold text-gray-900">
-                  {data.flight?.date || "—"}
+                  {safeString(data.flight?.date) || "—"}
                 </div>
               </div>
 
@@ -477,8 +531,8 @@ export default function FlightPlanPage() {
                 </label>
                 <div className="relative">
                   <div className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 pr-10 text-base font-semibold text-gray-900">
-                    {data.flight?.departure && data.flight?.destination 
-                      ? `${data.flight.departure} → ${data.flight.destination}` 
+                    {data.flight?.departure && data.flight?.destination
+                      ? `${safeString(data.flight.departure)} → ${safeString(data.flight.destination)}`
                       : "—"}
                   </div>
                   <svg
@@ -547,66 +601,77 @@ export default function FlightPlanPage() {
             </Card>
 
             {/* NOTAMs - Organized by Category */}
-            <div
-              onClick={() => openNotamModal("Destination NOTAMs - Original Text", data.notams?.rawDestinationNotams || "")}
-              className="cursor-pointer transition-transform hover:scale-[1.01]"
-            >
-              <Card title="Destination NOTAMs (Arrival-Relevant)" icon="📢">
-                <div className="mb-3 text-xs text-blue-600 font-medium">
-                  👆 Click to view original NOTAM text
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <ListField
-                    label="ILS / Approach"
-                    items={data.notams?.destinationILS}
-                    type={data.notams?.destinationILS?.length > 0 ? "warning" : "default"}
-                  />
-                  <ListField
-                    label="Runway"
-                    items={data.notams?.destinationRunway}
-                    type={data.notams?.destinationRunway?.length > 0 ? "warning" : "default"}
-                  />
-                  <ListField
-                    label="Other"
-                    items={data.notams?.destinationOther}
-                    type="info"
-                  />
-                </div>
-              </Card>
-            </div>
+            <Card title="Destination NOTAMs (Arrival-Relevant)" icon="📢">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <ListField
+                  label="ILS / Approach"
+                  items={data.notams?.destinationILS}
+                  type={data.notams?.destinationILS?.length > 0 ? "warning" : "default"}
+                  onCardClick={() => {
+                    const items = data.notams?.destinationILS || [];
+                    const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                    openNotamModal("ILS / Approach NOTAMs", content);
+                  }}
+                />
+                <ListField
+                  label="Runway"
+                  items={data.notams?.destinationRunway}
+                  type={data.notams?.destinationRunway?.length > 0 ? "warning" : "default"}
+                  onCardClick={() => {
+                    const items = data.notams?.destinationRunway || [];
+                    const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                    openNotamModal("Runway NOTAMs", content);
+                  }}
+                />
+                <ListField
+                  label="Other"
+                  items={data.notams?.destinationOther}
+                  type="info"
+                  onCardClick={() => {
+                    const items = data.notams?.destinationOther || [];
+                    const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                    openNotamModal("Other NOTAMs", content);
+                  }}
+                />
+              </div>
+            </Card>
 
             {/* Alternate NOTAMs */}
             {data.flight?.alternateAirport && (
-              <div
-                onClick={() => openNotamModal("Alternate NOTAMs - Original Text", data.notams?.rawAlternateNotams || "")}
-                className="cursor-pointer transition-transform hover:scale-[1.01]"
-              >
-                <Card title="Alternate NOTAMs (Arrival-Relevant)" icon="🔄">
-                  <div className="mb-3 text-xs text-blue-600 font-medium">
-                    👆 Click to view original NOTAM text
-                  </div>
-                  <div className="mb-4">
-                    <KV k="Alternate Airport" v={data.flight.alternateAirport} />
-                  </div>
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <ListField
-                      label="ILS / Approach"
-                      items={data.notams?.alternateILS}
-                      type={data.notams?.alternateILS?.length > 0 ? "warning" : "default"}
-                    />
-                    <ListField
-                      label="Runway"
-                      items={data.notams?.alternateRunway}
-                      type={data.notams?.alternateRunway?.length > 0 ? "warning" : "default"}
-                    />
-                    <ListField
-                      label="Other"
-                      items={data.notams?.alternateOther}
-                      type="info"
-                    />
-                  </div>
-                </Card>
-              </div>
+              <Card title={`Alternate NOTAMs - ${safeString(data.flight.alternateAirport)}`} icon="🔄">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <ListField
+                    label="ILS / Approach"
+                    items={data.notams?.alternateILS}
+                    type={data.notams?.alternateILS?.length > 0 ? "warning" : "default"}
+                    onCardClick={() => {
+                      const items = data.notams?.alternateILS || [];
+                      const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                      openNotamModal("Alternate - ILS / Approach NOTAMs", content);
+                    }}
+                  />
+                  <ListField
+                    label="Runway"
+                    items={data.notams?.alternateRunway}
+                    type={data.notams?.alternateRunway?.length > 0 ? "warning" : "default"}
+                    onCardClick={() => {
+                      const items = data.notams?.alternateRunway || [];
+                      const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                      openNotamModal("Alternate - Runway NOTAMs", content);
+                    }}
+                  />
+                  <ListField
+                    label="Other"
+                    items={data.notams?.alternateOther}
+                    type="info"
+                    onCardClick={() => {
+                      const items = data.notams?.alternateOther || [];
+                      const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                      openNotamModal("Alternate - Other NOTAMs", content);
+                    }}
+                  />
+                </div>
+              </Card>
             )}
 
             {/* Download Summary Button */}
