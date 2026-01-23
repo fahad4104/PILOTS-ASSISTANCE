@@ -410,54 +410,114 @@ export default function ImportRosterPage() {
           {/* Preview Section */}
           {success && previewData.length > 0 && (
             <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <div className="bg-gradient-to-r from-green-600 to-green-700 px-6 py-4">
-                <h2 className="text-xl font-bold text-white">Preview Imported Flights ({previewData.length})</h2>
+              {/* Header like eCrew Report */}
+              <div className="bg-gradient-to-r from-blue-700 to-blue-800 px-6 py-4 text-center">
+                <h2 className="text-xl font-bold text-white">ETIHAD Airways</h2>
+                <p className="text-blue-100 text-sm mt-1">Personal Crew Schedule Report</p>
+                <p className="text-blue-200 text-xs mt-1">
+                  {previewData.length} Flights Synced
+                </p>
               </div>
 
-              <div className="p-6">
-                <div className="mb-4 max-h-96 overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-100 sticky top-0">
-                      <tr>
-                        <th className="px-3 py-2 text-left">Date</th>
-                        <th className="px-3 py-2 text-left">Flight</th>
-                        <th className="px-3 py-2 text-left">Route</th>
-                        <th className="px-3 py-2 text-left">Times</th>
-                        <th className="px-3 py-2 text-left">Aircraft</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {previewData.map((flight, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-3 py-2">{flight.date}</td>
-                          <td className="px-3 py-2 font-semibold">{flight.flightNumber}</td>
-                          <td className="px-3 py-2">{flight.departure} → {flight.destination}</td>
-                          <td className="px-3 py-2">{flight.departureTime} - {flight.arrivalTime}</td>
-                          <td className="px-3 py-2">{flight.aircraft}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+              <div className="p-4 overflow-x-auto">
+                {/* Schedule Table */}
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-blue-600 text-white">
+                      <th className="border border-blue-500 px-2 py-2 text-left w-24">Date</th>
+                      <th className="border border-blue-500 px-2 py-2 text-center w-16">Flight</th>
+                      <th className="border border-blue-500 px-2 py-2 text-center w-20">Route</th>
+                      <th className="border border-blue-500 px-2 py-2 text-center w-16">STD</th>
+                      <th className="border border-blue-500 px-2 py-2 text-center w-16">STA</th>
+                      <th className="border border-blue-500 px-2 py-2 text-center w-20">Aircraft</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewData
+                      .filter(f => f.departure && f.destination && !['OFF', 'ROFF', 'DAY'].includes(f.departure))
+                      .map((flight, idx) => {
+                        const date = new Date(flight.date);
+                        const dayName = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+                        const formattedDate = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')} ${dayName}`;
 
-                <div className="flex gap-3 justify-end">
-                  <button
-                    onClick={() => {
-                      setSuccess(false);
-                      setPreviewData([]);
-                      setFile(null);
-                    }}
-                    className="rounded-xl border border-gray-300 px-6 py-3 font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmImport}
-                    className="rounded-xl bg-green-600 px-6 py-3 font-semibold text-white hover:bg-green-700 transition-colors"
-                  >
-                    Confirm Import
-                  </button>
+                        return (
+                          <tr key={idx} className={idx % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
+                            <td className="border border-gray-300 px-2 py-2 font-medium text-gray-800">
+                              {formattedDate}
+                            </td>
+                            <td className="border border-gray-300 px-2 py-2 text-center">
+                              <span className="bg-blue-600 text-white px-2 py-1 rounded font-bold">
+                                {flight.flight_number || flight.flightNumber}
+                              </span>
+                            </td>
+                            <td className="border border-gray-300 px-2 py-2 text-center font-medium">
+                              <span className="text-blue-700">{flight.departure}</span>
+                              <span className="text-gray-400 mx-1">→</span>
+                              <span className="text-green-700">{flight.destination}</span>
+                            </td>
+                            <td className="border border-gray-300 px-2 py-2 text-center text-green-600 font-mono">
+                              {flight.departure_time || flight.departureTime || '-'}
+                            </td>
+                            <td className="border border-gray-300 px-2 py-2 text-center text-red-600 font-mono">
+                              {flight.arrival_time || flight.arrivalTime || '-'}
+                            </td>
+                            <td className="border border-gray-300 px-2 py-2 text-center text-gray-600">
+                              {flight.aircraft || '-'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+
+                {/* Stats Summary */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-blue-50 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-blue-700">
+                      {previewData.filter(f => f.departure && f.destination && !['OFF', 'ROFF', 'DAY'].includes(f.departure)).length}
+                    </p>
+                    <p className="text-xs text-blue-600">Total Flights</p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-green-700">
+                      {new Set(previewData.map(f => f.departure).filter(d => d && d.length === 3)).size}
+                    </p>
+                    <p className="text-xs text-green-600">Airports</p>
+                  </div>
+                  <div className="bg-purple-50 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-purple-700">
+                      {new Set(previewData.map(f => f.date)).size}
+                    </p>
+                    <p className="text-xs text-purple-600">Flight Days</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg p-3 text-center">
+                    <p className="text-2xl font-bold text-orange-700">
+                      {new Set(previewData.map(f => `${f.departure}-${f.destination}`)).size}
+                    </p>
+                    <p className="text-xs text-orange-600">Routes</p>
+                  </div>
                 </div>
+              </div>
+
+              <div className="border-t border-gray-200 px-6 py-4 bg-gray-50 flex gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    setSuccess(false);
+                    setPreviewData([]);
+                    setFile(null);
+                    setError('');
+                  }}
+                  className="rounded-xl border border-gray-300 px-6 py-3 font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmImport}
+                  disabled={loading}
+                  className="rounded-xl bg-green-600 px-6 py-3 font-semibold text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {loading ? 'Saving...' : '✓ Confirm Import'}
+                </button>
               </div>
             </div>
           )}

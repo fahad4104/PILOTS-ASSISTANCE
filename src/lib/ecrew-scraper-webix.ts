@@ -374,7 +374,12 @@ export class EcrewScraperWebix {
           const flightNumMatch = text.match(/\b(\d{1,4})\b/);
           const timeMatch = text.match(/(\d{1,2}:\d{2})/g);
 
-          if (routeMatch && flightNumMatch) {
+          // Skip non-flight activities
+          const skipWords = ['OFF', 'ROFF', 'REST', 'SBY', 'DAY', 'GROUND', 'TRAIN', 'LEAVE'];
+          const hasSkipWord = skipWords.some(word => text.toUpperCase().includes(word));
+
+          // Only process if it looks like a real flight (has route and flight number, no skip words)
+          if (routeMatch && flightNumMatch && !hasSkipWord) {
             // This looks like a flight cell
             // Try to find the date from the column header
             let day = 1;
