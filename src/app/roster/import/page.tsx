@@ -131,6 +131,11 @@ export default function ImportRosterPage() {
         setPreviewData(data.flights);
         setSuccess(true);
         setShowAutoSync(false);
+      } else if (data.scrapedFlights && data.scrapedFlights.length > 0) {
+        // DB save failed but we have scraped data - show it for debugging
+        setPreviewData(data.scrapedFlights);
+        setError(`${data.error}: ${data.details || 'Unknown error'}. Showing scraped data below.`);
+        setSuccess(true);
       } else {
         setError(data.error || data.message || 'Failed to sync with eCrew');
       }

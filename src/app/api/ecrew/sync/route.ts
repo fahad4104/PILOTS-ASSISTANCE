@@ -59,17 +59,31 @@ export async function POST(request: NextRequest) {
       // }
 
       // Transform the scraped flights to match Supabase schema
-      const flightsToInsert = flights.map((flight) => ({
-        user_id: userId,
-        date: flight.date,
-        flight_number: flight.flightNumber,
-        departure: flight.departure,
-        destination: flight.destination,
-        departure_time: flight.departureTime,
-        arrival_time: flight.arrivalTime,
-        aircraft: flight.aircraft,
-        status: flight.status,
-      }));
+      // Filter out flights with missing required data
+      const flightsToInsert = flights
+        .filter((flight) => flight.date && flight.flightNumber)
+        .map((flight) => ({
+          user_id: userId,
+          date: flight.date || new Date().toISOString().split('T')[0],
+          flight_number: flight.flightNumber || 'UNKNOWN',
+          departure: flight.departure || '',
+          destination: flight.destination || '',
+          departure_time: flight.departureTime || '',
+          arrival_time: flight.arrivalTime || '',
+          aircraft: flight.aircraft || '',
+          status: flight.status || 'scheduled',
+        }));
+
+      console.log(`Filtered flights to insert: ${flightsToInsert.length} of ${flights.length}`);
+
+      if (flightsToInsert.length === 0) {
+        return NextResponse.json({
+          success: true,
+          message: 'No valid flights to save (missing date or flight number)',
+          syncedCount: 0,
+          scrapedFlights: flights,
+        });
+      }
 
       // Insert flights into Supabase
       const { data, error: insertError } = await supabase
@@ -79,11 +93,15 @@ export async function POST(request: NextRequest) {
 
       if (insertError) {
         console.error('Supabase insert error:', insertError);
+        console.error('Flights data that failed:', JSON.stringify(flightsToInsert, null, 2));
+
+        // Return the scraped flights anyway so user can see what was found
         return NextResponse.json(
           {
             success: false,
             error: 'Failed to save flights to database',
             details: insertError.message,
+            scrapedFlights: flights, // Return scraped data for debugging
           },
           { status: 500 }
         );
