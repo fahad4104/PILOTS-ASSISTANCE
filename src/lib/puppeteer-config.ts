@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 
 /**
@@ -10,8 +10,7 @@ export async function getPuppeteerLaunchOptions() {
   const isVercel = process.env.VERCEL === '1';
 
   if (isProduction || isVercel) {
-    const chromiumPath =
-      process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
+    const chromiumPath = await chromium.executablePath();
 
     // Production/Vercel configuration
     return {

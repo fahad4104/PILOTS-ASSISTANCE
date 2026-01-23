@@ -264,12 +264,12 @@ export default function ImportRosterPage() {
                       value={ecrewPassword}
                       onChange={(e) => setEcrewPassword(e.target.value)}
                       className="w-full px-4 py-3 pr-12 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
-                      placeholder="????"
+                      placeholder="********"
                     />
                     <button
                       type="button"
                       onClick={() => setShowEcrewPassword((prev) => !prev)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 z-10"
                       aria-label={showEcrewPassword ? "Hide password" : "Show password"}
                     >
                       {showEcrewPassword ? (
