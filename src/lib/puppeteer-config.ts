@@ -1,31 +1,28 @@
 import puppeteer from 'puppeteer';
+import chromium from '@sparticuz/chromium';
 
 /**
  * Get Puppeteer launch options based on environment
  * In production (Vercel), we need special configuration for serverless
  */
-export function getPuppeteerLaunchOptions() {
+export async function getPuppeteerLaunchOptions() {
   const isProduction = process.env.NODE_ENV === 'production';
   const isVercel = process.env.VERCEL === '1';
 
   if (isProduction || isVercel) {
+    const chromiumPath =
+      process.env.PUPPETEER_EXECUTABLE_PATH || (await chromium.executablePath());
+
     // Production/Vercel configuration
     return {
-      headless: true,
+      headless: chromium.headless,
       args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
+        ...chromium.args,
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
         '--single-process', // Important for serverless
       ],
-      executablePath:
-        process.env.PUPPETEER_EXECUTABLE_PATH ||
-        '/usr/bin/google-chrome-stable' ||
-        '/usr/bin/chromium-browser',
+      executablePath: chromiumPath,
     };
   }
 
@@ -46,6 +43,6 @@ export function getPuppeteerLaunchOptions() {
  * Create a browser instance with proper configuration
  */
 export async function createBrowser() {
-  const options = getPuppeteerLaunchOptions();
+  const options = await getPuppeteerLaunchOptions();
   return await puppeteer.launch(options);
 }

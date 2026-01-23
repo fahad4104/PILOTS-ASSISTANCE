@@ -68,7 +68,6 @@ export async function POST(request: NextRequest) {
         departure_time: flight.departureTime,
         arrival_time: flight.arrivalTime,
         aircraft: flight.aircraft,
-        co_pilot: flight.coPilot || null,
         status: flight.status,
       }));
 
