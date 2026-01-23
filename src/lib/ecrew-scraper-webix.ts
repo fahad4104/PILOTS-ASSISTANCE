@@ -330,11 +330,162 @@ export class EcrewScraperWebix {
     }
 
     try {
-      console.log('Extracting flight data...');
+      console.log('Extracting flight data from eCrew calendar...');
 
       // Wait for schedule data to load
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 5000));
 
+      // Extract flights directly from the eCrew calendar view
+      const flights = await this.page.evaluate(() => {
+        const extractedFlights: any[] = [];
+
+        // Get the current year and month from the page
+        const periodText = document.body.innerText;
+        const yearMatch = periodText.match(/\b(202\d)\b/);
+        const currentYear = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+
+        // Look for the calendar month header
+        const monthHeaders = document.querySelectorAll('td, th, div');
+        let currentMonth = new Date().getMonth() + 1;
+        for (const header of monthHeaders) {
+          const text = header.textContent || '';
+          const monthMatch = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d{4})?/i);
+          if (monthMatch) {
+            const months: { [key: string]: number } = {
+              'january': 1, 'february': 2, 'march': 3, 'april': 4,
+              'may': 5, 'june': 6, 'july': 7, 'august': 8,
+              'september': 9, 'october': 10, 'november': 11, 'december': 12
+            };
+            currentMonth = months[monthMatch[1].toLowerCase()];
+            break;
+          }
+        }
+
+        // Find all flight-like elements (blue boxes with flight info)
+        // eCrew uses colored cells for different activity types
+        const allCells = document.querySelectorAll('td, div');
+
+        for (const cell of allCells) {
+          const text = (cell.textContent || '').trim();
+          const bgColor = window.getComputedStyle(cell).backgroundColor;
+
+          // Look for cells that look like flights (have route pattern like AUH-MAN)
+          const routeMatch = text.match(/([A-Z]{3})-([A-Z]{3})/);
+          const flightNumMatch = text.match(/\b(\d{1,4})\b/);
+          const timeMatch = text.match(/(\d{1,2}:\d{2})/g);
+
+          if (routeMatch && flightNumMatch) {
+            // This looks like a flight cell
+            // Try to find the date from the column header
+            let day = 1;
+
+            // Look for day number in parent or sibling elements
+            const parent = cell.parentElement;
+            if (parent) {
+              const parentText = parent.textContent || '';
+              const dayMatch = parentText.match(/\b(\d{1,2})\b/);
+              if (dayMatch) {
+                day = parseInt(dayMatch[1]);
+              }
+            }
+
+            // Get the column index to find the day
+            const row = cell.closest('tr');
+            if (row) {
+              const cells = row.querySelectorAll('td, th');
+              const cellIndex = Array.from(cells).indexOf(cell as HTMLTableCellElement);
+
+              // Try to find the header row with day numbers
+              const table = cell.closest('table');
+              if (table) {
+                const headerRow = table.querySelector('tr');
+                if (headerRow) {
+                  const headerCells = headerRow.querySelectorAll('td, th');
+                  if (headerCells[cellIndex]) {
+                    const headerText = headerCells[cellIndex].textContent || '';
+                    const headerDayMatch = headerText.match(/\b(\d{1,2})\b/);
+                    if (headerDayMatch) {
+                      day = parseInt(headerDayMatch[1]);
+                    }
+                  }
+                }
+              }
+            }
+
+            const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+            extractedFlights.push({
+              date: dateStr,
+              flightNumber: `EY${flightNumMatch[1]}`,
+              departure: routeMatch[1],
+              destination: routeMatch[2],
+              departureTime: timeMatch ? timeMatch[0] : '',
+              arrivalTime: timeMatch && timeMatch.length > 1 ? timeMatch[1] : '',
+              aircraft: '',
+              status: 'scheduled',
+              rawText: text.substring(0, 100),
+            });
+          }
+        }
+
+        // Also try to extract from the pairing details if visible
+        const pairingText = document.body.innerText;
+        const pairingMatches = pairingText.matchAll(/(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}).*?(?:EY)?(\d{1,4}).*?([A-Z]{3})\s*[-–]\s*([A-Z]{3}).*?(\d{1,2}:\d{2}).*?(\d{1,2}:\d{2})/gi);
+
+        for (const match of pairingMatches) {
+          extractedFlights.push({
+            date: match[1],
+            flightNumber: `EY${match[2]}`,
+            departure: match[3],
+            destination: match[4],
+            departureTime: match[5],
+            arrivalTime: match[6],
+            aircraft: '',
+            status: 'scheduled',
+          });
+        }
+
+        return {
+          flights: extractedFlights,
+          debug: {
+            totalCells: document.querySelectorAll('td, div').length,
+            bodyTextLength: document.body.innerText.length,
+            foundFlights: extractedFlights.length,
+          }
+        };
+      });
+
+      console.log('Extraction debug:', flights.debug);
+      console.log(`Found ${flights.flights.length} flights from calendar`);
+
+      // If no flights found, try the original extraction methods
+      if (flights.flights.length === 0) {
+        console.log('No flights from calendar, trying alternative methods...');
+        return await this.extractFlightsAlternative();
+      }
+
+      return flights.flights.map((f: any) => ({
+        date: f.date,
+        flightNumber: f.flightNumber,
+        departure: f.departure,
+        destination: f.destination,
+        departureTime: f.departureTime,
+        arrivalTime: f.arrivalTime,
+        aircraft: f.aircraft || '',
+        status: 'scheduled' as const,
+      }));
+
+    } catch (error) {
+      throw new Error(`Failed to extract flights: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async extractFlightsAlternative(): Promise<EcrewFlight[]> {
+    if (!this.page) {
+      throw new Error('Browser not initialized.');
+    }
+
+    try {
       // Wait for CrewSchedule iframe when present
       await this.page
         .waitForFunction(
