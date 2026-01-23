@@ -18,6 +18,22 @@ model Manual {
   createdAt    DateTime @default(now())
 }
 
+model Flight {
+  id             String   @id @default(cuid())
+  user_id        String
+  date           String
+  flight_number  String
+  departure      String
+  destination    String
+  departure_time String
+  arrival_time   String
+  aircraft       String
+  status         String   @default("scheduled")
+  createdAt      DateTime @default(now())
+
+  @@map("flights")
+}
+
 
 
 
