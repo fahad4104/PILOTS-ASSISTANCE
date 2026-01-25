@@ -7,15 +7,18 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import Link from "next/link";
 
 type Flight = {
-  id: string;
+  id?: string;
   date: string;
-  flightNumber: string;
+  flightNumber?: string;
+  flight_number?: string;
   departure: string;
   destination: string;
-  departureTime: string;
-  arrivalTime: string;
-  aircraft: string;
-  status: "scheduled" | "completed" | "cancelled";
+  departureTime?: string;
+  departure_time?: string;
+  arrivalTime?: string;
+  arrival_time?: string;
+  aircraft?: string;
+  status?: "scheduled" | "completed" | "cancelled";
   coPilot?: string;
 };
 
