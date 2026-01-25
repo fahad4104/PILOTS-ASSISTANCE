@@ -330,8 +330,192 @@ export class EcrewScraperWebix {
     }
 
     try {
-      console.log('Extracting flight data from eCrew calendar...');
+      console.log('Extracting flight data from eCrew...');
 
+      // Wait for dashboard to load
+      await new Promise(resolve => setTimeout(resolve, 10000));
+
+      // Find the dashboard iframe (HomeIndex)
+      let frames = this.page.frames();
+      let dashboardFrame = frames.find(f => f.url().includes('HomeIndex'));
+
+      if (!dashboardFrame) {
+        console.log('Dashboard iframe not found, waiting more...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        frames = this.page.frames();
+        dashboardFrame = frames.find(f => f.url().includes('HomeIndex'));
+      }
+
+      if (!dashboardFrame) {
+        console.log('Dashboard iframe still not found, trying alternative method...');
+        return await this.extractFlightsAlternative();
+      }
+
+      console.log('Found dashboard iframe, clicking Pairing details...');
+
+      // Click on "Pairing details" button to open the popup
+      try {
+        await dashboardFrame.click('text=Pairing details');
+        await new Promise(resolve => setTimeout(resolve, 8000));
+      } catch (e) {
+        console.log('Could not click Pairing details, trying alternative...');
+        return await this.extractFlightsFromCalendar(dashboardFrame);
+      }
+
+      // After clicking, a new iframe appears with flight details
+      frames = this.page.frames();
+      const detailsFrame = frames.find(f => f.url().includes('AIMS/OKDetails') || f.url().includes('Details'));
+
+      if (detailsFrame) {
+        console.log('Found details iframe, extracting flight data...');
+        return await this.extractFlightsFromDetailsFrame(detailsFrame);
+      }
+
+      // Fallback: extract from calendar view
+      console.log('Details iframe not found, extracting from calendar...');
+      return await this.extractFlightsFromCalendar(dashboardFrame);
+
+    } catch (error) {
+      throw new Error(`Failed to extract flights: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async extractFlightsFromDetailsFrame(frame: any): Promise<EcrewFlight[]> {
+    try {
+      const flightText = await frame.evaluate(() => document.body?.innerText || '');
+      console.log('Details frame text length:', flightText.length);
+
+      const flights: EcrewFlight[] = [];
+
+      // Parse the pairing details text
+      // Format: "AUH MAN 0420 1355 Tue27Jan ... A6-BLJ 07:55"
+      const lines = flightText.split('\n');
+
+      // Find flight rows - they have route pattern like "AUH ... MAN ... time time date"
+      const flightPattern = /([A-Z]{3})\s+([A-Z]{3})\s+(\d{4})\s+(\d{4})\s+([A-Za-z]{3})(\d{1,2})([A-Za-z]{3})/g;
+
+      let match;
+      while ((match = flightPattern.exec(flightText)) !== null) {
+        const departure = match[1];
+        const destination = match[2];
+        const depTime = match[3].substring(0, 2) + ':' + match[3].substring(2);
+        const arrTime = match[4].substring(0, 2) + ':' + match[4].substring(2);
+        const dayOfWeek = match[5];
+        const day = match[6];
+        const month = match[7];
+
+        // Convert month name to number
+        const months: { [key: string]: string } = {
+          'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+          'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+          'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+        };
+        const monthNum = months[month] || '01';
+        const year = new Date().getFullYear();
+        const dateStr = `${year}-${monthNum}-${day.padStart(2, '0')}`;
+
+        // Try to find aircraft (A6-XXX pattern)
+        const aircraftMatch = flightText.match(/A6-[A-Z]{3}/);
+        const aircraft = aircraftMatch ? aircraftMatch[0] : '';
+
+        flights.push({
+          date: dateStr,
+          flightNumber: `EY`, // Will be updated if we can find it
+          departure,
+          destination,
+          departureTime: depTime,
+          arrivalTime: arrTime,
+          aircraft,
+          status: 'scheduled'
+        });
+      }
+
+      // Also try to extract from table format
+      // "Flight DEP ARR STD STA ..."
+      const tableMatch = flightText.match(/Flight\s+DEP\s+ARR\s+STD\s+STA/i);
+      if (tableMatch && flights.length === 0) {
+        // Parse table rows
+        const rows = flightText.split('\n').filter((line: string) => {
+          return line.match(/[A-Z]{3}\s+[A-Z]{3}\s+\d{4}\s+\d{4}/);
+        });
+
+        for (const row of rows) {
+          const parts = row.trim().split(/\s+/);
+          if (parts.length >= 4) {
+            const departure = parts.find((p: string) => p.match(/^[A-Z]{3}$/));
+            const destination = parts.find((p: string, i: number) => p.match(/^[A-Z]{3}$/) && i > parts.indexOf(departure || ''));
+
+            if (departure && destination) {
+              const timePattern = /\d{4}/g;
+              const times = row.match(timePattern);
+              const depTime = times?.[0] ? times[0].substring(0, 2) + ':' + times[0].substring(2) : '';
+              const arrTime = times?.[1] ? times[1].substring(0, 2) + ':' + times[1].substring(2) : '';
+
+              flights.push({
+                date: new Date().toISOString().slice(0, 10),
+                flightNumber: 'EY',
+                departure,
+                destination,
+                departureTime: depTime,
+                arrivalTime: arrTime,
+                aircraft: '',
+                status: 'scheduled'
+              });
+            }
+          }
+        }
+      }
+
+      console.log(`Extracted ${flights.length} flights from details frame`);
+      return flights;
+
+    } catch (error) {
+      console.log('Error extracting from details frame:', error);
+      return [];
+    }
+  }
+
+  async extractFlightsFromCalendar(frame: any): Promise<EcrewFlight[]> {
+    try {
+      const calendarText = await frame.evaluate(() => document.body?.innerText || '');
+      const flights: EcrewFlight[] = [];
+
+      // Look for patterns like "73 AUH-MAN" or "153 AUH-VIE"
+      const routePattern = /(\d{1,4})\s*\n?\s*([A-Z]{3})-([A-Z]{3})/g;
+
+      let match;
+      while ((match = routePattern.exec(calendarText)) !== null) {
+        const pairingNum = match[1];
+        const departure = match[2];
+        const destination = match[3];
+
+        flights.push({
+          date: new Date().toISOString().slice(0, 10), // Will need to be updated with actual date
+          flightNumber: `EY${pairingNum}`,
+          departure,
+          destination,
+          departureTime: '',
+          arrivalTime: '',
+          aircraft: '',
+          status: 'scheduled'
+        });
+      }
+
+      console.log(`Extracted ${flights.length} flights from calendar`);
+      return flights;
+
+    } catch (error) {
+      console.log('Error extracting from calendar:', error);
+      return [];
+    }
+  }
+
+  async extractFlightsOld(): Promise<EcrewFlight[]> {
+    if (!this.page) {
+      throw new Error('Browser not initialized.');
+    }
+
+    try {
       // Wait for schedule data to load
       await new Promise(resolve => setTimeout(resolve, 5000));
 
