@@ -7,10 +7,10 @@ const applications = [
   {
     id: "brake-cooling",
     name: "Brake Cooling Calculator",
-    description: "Calculate maximum safe RTO speed before fuse plug melt zone",
+    description: "Calculate RTO speed that causes fuse plug melt zone",
     icon: "🛞",
     href: "/applications/brake-cooling",
-    aircraft: "B777",
+    aircraft: "B777/B787",
   },
 ];
 
