@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Pilot Assistance - Flight Management System",
-  description: "Professional pilot assistance tool for B787/B777 - Flight roster, manual search, and OFP analysis",
+  description: "Professional pilot assistance tool for B787/B777 - Manual search and OFP analysis",
   manifest: "/manifest.json",
   themeColor: "#3D2314",
   appleWebApp: {

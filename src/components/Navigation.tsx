@@ -13,7 +13,7 @@ export default function Navigation() {
   };
 
   const navItems = [
-    { href: "/", label: "Roster", icon: "📅" },
+    { href: "/applications", label: "Applications", icon: "📱" },
     { href: "/ask", label: "Ask", icon: "💬" },
     { href: "/flight-plan", label: "Flight Plan", icon: "✈️" },
   ];

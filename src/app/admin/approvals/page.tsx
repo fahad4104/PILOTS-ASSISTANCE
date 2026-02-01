@@ -23,7 +23,7 @@ export default function ApprovalsPage() {
   useEffect(() => {
     // Only admin can access this page
     if (user && user.rank !== "Admin") {
-      router.push("/roster");
+      router.push("/applications");
       return;
     }
 

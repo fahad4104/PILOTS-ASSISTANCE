@@ -14,9 +14,9 @@ export default function LoginPage() {
   const { login, user } = useAuth();
 
   useEffect(() => {
-    // If already logged in, redirect to roster
+    // If already logged in, redirect to applications
     if (user) {
-      router.push("/roster");
+      router.push("/applications");
     }
   }, [user, router]);
 
@@ -28,7 +28,7 @@ export default function LoginPage() {
     try {
       const success = await login(email, password);
       if (success) {
-        router.push("/roster");
+        router.push("/applications");
       } else {
         setError("Invalid email or password");
       }
