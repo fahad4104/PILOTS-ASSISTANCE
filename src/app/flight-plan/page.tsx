@@ -674,6 +674,129 @@ export default function FlightPlanPage() {
               </Card>
             )}
 
+            {/* Enhanced NOTAM Filtering (Time-Based) */}
+            {data.enhancedNotams && data.enhancedNotams.notams && data.enhancedNotams.notams.length > 0 && (
+              <Card title="Enhanced NOTAM Filter (Validity-Based)" icon="🕐">
+                <div className="space-y-4">
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                    <strong>Time Windows:</strong> DEP (ETD±2h) | DEST (ETA-1h to +2h) | ALTN (ETA to +4h)
+                  </div>
+
+                  {/* Departure NOTAMs */}
+                  {(() => {
+                    const depNotams = data.enhancedNotams.notams.filter((n: any) => n.active?.dep?.isActive);
+                    if (depNotams.length === 0) return null;
+                    return (
+                      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                        <div className="bg-gradient-to-r from-green-600 to-green-700 px-4 py-2 text-white font-semibold flex items-center gap-2">
+                          <span>🛫</span> Departure ({data.enhancedNotams.flight?.dep}) - {depNotams.length} Active
+                        </div>
+                        <div className="divide-y divide-gray-100 max-h-60 overflow-auto">
+                          {depNotams.map((notam: any, idx: number) => (
+                            <div key={idx} className="p-3 hover:bg-gray-50 cursor-pointer" onClick={() => openNotamModal(`NOTAM ${notam.idRaw}`, notam.text)}>
+                              <div className="flex items-start gap-2">
+                                <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 rounded">{notam.idRaw || 'N/A'}</span>
+                                {notam.tags?.map((tag: string) => (
+                                  <span key={tag} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{tag}</span>
+                                ))}
+                                {notam.validity?.endKind === 'UFN' && <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">UFN</span>}
+                              </div>
+                              <p className="mt-1 text-sm text-gray-700 line-clamp-2">{notam.text?.substring(0, 150)}...</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Destination NOTAMs */}
+                  {(() => {
+                    const destNotams = data.enhancedNotams.notams.filter((n: any) => n.active?.dest?.isActive);
+                    if (destNotams.length === 0) return null;
+                    return (
+                      <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                        <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-4 py-2 text-white font-semibold flex items-center gap-2">
+                          <span>🛬</span> Destination ({data.enhancedNotams.flight?.dest}) - {destNotams.length} Active
+                        </div>
+                        <div className="divide-y divide-gray-100 max-h-60 overflow-auto">
+                          {destNotams.map((notam: any, idx: number) => (
+                            <div key={idx} className="p-3 hover:bg-gray-50 cursor-pointer" onClick={() => openNotamModal(`NOTAM ${notam.idRaw}`, notam.text)}>
+                              <div className="flex items-start gap-2">
+                                <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded">{notam.idRaw || 'N/A'}</span>
+                                {notam.tags?.map((tag: string) => (
+                                  <span key={tag} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{tag}</span>
+                                ))}
+                                {notam.validity?.endKind === 'UFN' && <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">UFN</span>}
+                                {notam.schedule?.length > 0 && <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">SCHED</span>}
+                              </div>
+                              <p className="mt-1 text-sm text-gray-700 line-clamp-2">{notam.text?.substring(0, 150)}...</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Alternate NOTAMs */}
+                  {(() => {
+                    const altnIcaos = data.enhancedNotams.flight?.altn || [];
+                    return altnIcaos.map((altnIcao: string) => {
+                      const altnNotams = data.enhancedNotams.notams.filter((n: any) => n.active?.altn?.[altnIcao]?.isActive);
+                      if (altnNotams.length === 0) return null;
+                      return (
+                        <div key={altnIcao} className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+                          <div className="bg-gradient-to-r from-amber-600 to-amber-700 px-4 py-2 text-white font-semibold flex items-center gap-2">
+                            <span>🔄</span> Alternate ({altnIcao}) - {altnNotams.length} Active
+                          </div>
+                          <div className="divide-y divide-gray-100 max-h-60 overflow-auto">
+                            {altnNotams.map((notam: any, idx: number) => (
+                              <div key={idx} className="p-3 hover:bg-gray-50 cursor-pointer" onClick={() => openNotamModal(`NOTAM ${notam.idRaw}`, notam.text)}>
+                                <div className="flex items-start gap-2">
+                                  <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-800 rounded">{notam.idRaw || 'N/A'}</span>
+                                  {notam.tags?.map((tag: string) => (
+                                    <span key={tag} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">{tag}</span>
+                                  ))}
+                                  {notam.validity?.endKind === 'UFN' && <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">UFN</span>}
+                                </div>
+                                <p className="mt-1 text-sm text-gray-700 line-clamp-2">{notam.text?.substring(0, 150)}...</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+
+                  {/* No active NOTAMs message */}
+                  {(() => {
+                    const hasAny = data.enhancedNotams.notams.some((n: any) =>
+                      n.active?.dep?.isActive || n.active?.dest?.isActive ||
+                      Object.values(n.active?.altn || {}).some((a: any) => a?.isActive)
+                    );
+                    if (hasAny) return null;
+                    return (
+                      <div className="text-center py-6 text-gray-500">
+                        <span className="text-4xl">✅</span>
+                        <p className="mt-2">No active NOTAMs found within flight time windows</p>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Parse warnings */}
+                  {data.enhancedNotams.parseWarnings?.length > 0 && (
+                    <div className="rounded-lg bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                      <strong>Parser Warnings:</strong>
+                      <ul className="list-disc list-inside mt-1">
+                        {data.enhancedNotams.parseWarnings.map((w: string, i: number) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            )}
+
             {/* Download Summary Button */}
             <div className="flex justify-center">
               <button

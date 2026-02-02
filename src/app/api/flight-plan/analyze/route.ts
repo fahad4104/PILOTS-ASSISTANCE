@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import {
+  parseNotamBulletin,
+  extractFlightTimesFromOFP,
+  FlightTimes,
+  ParsedNotamBulletin,
+} from "@/lib/notam-parser";
 const pdf = require("pdf-parse");
 
 export const runtime = "nodejs";
@@ -918,11 +924,42 @@ export async function POST(req: Request) {
     const windShear = parseWindShear(extracted.text);
     const mora = parseMORA(extracted.text);
 
+    // Enhanced NOTAM parsing with validity/schedule filtering
+    let enhancedNotams: ParsedNotamBulletin | null = null;
+    try {
+      const flightTimesPartial = extractFlightTimesFromOFP(extracted.text);
+      if (flightTimesPartial && flightTimesPartial.dep && flightTimesPartial.dest) {
+        const flightTimes: FlightTimes = {
+          dep: flightTimesPartial.dep,
+          dest: flightTimesPartial.dest,
+          altn: flightTimesPartial.altn || (altICAO ? [altICAO] : []),
+          etdUtc: flightTimesPartial.etdUtc!,
+          etaUtc: flightTimesPartial.etaUtc!,
+          altnEtaUtc: flightTimesPartial.altnEtaUtc || {},
+        };
+
+        // If we have alternate but no ETA for it, calculate default
+        if (altICAO && !flightTimes.altnEtaUtc[altICAO]) {
+          flightTimes.altnEtaUtc[altICAO] = new Date(
+            flightTimes.etaUtc.getTime() + 60 * 60 * 1000
+          );
+        }
+        if (!flightTimes.altn.includes(altICAO) && altICAO) {
+          flightTimes.altn.push(altICAO);
+        }
+
+        enhancedNotams = parseNotamBulletin(extracted.text, flightTimes);
+      }
+    } catch (err) {
+      console.error("Enhanced NOTAM parsing error:", err);
+    }
+
     return NextResponse.json({
       ok: true,
       flight,
       weather,
       notams,
+      enhancedNotams,
       fuel,
       windShear,
       mora,
