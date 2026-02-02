@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Navigation from "@/components/Navigation";
@@ -15,11 +15,18 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#3D2314",
+};
+
 export const metadata: Metadata = {
   title: "Pilot Assistance - Flight Management System",
   description: "Professional pilot assistance tool for B787/B777 - Manual search and OFP analysis",
   manifest: "/manifest.json",
-  themeColor: "#3D2314",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -27,12 +34,6 @@ export const metadata: Metadata = {
   },
   formatDetection: {
     telephone: false,
-  },
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
   },
   icons: {
     icon: "/icon.png",
