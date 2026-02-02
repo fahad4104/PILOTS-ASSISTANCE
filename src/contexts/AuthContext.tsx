@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { logLogin } from "@/lib/activity-logger";
 
 type User = {
   id: string;
@@ -54,6 +55,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
         setUser(userData);
         localStorage.setItem("user", JSON.stringify(userData));
+
+        // Log login activity
+        logLogin(userData.id, userData.name, userData.email);
+
         return true;
       }
 

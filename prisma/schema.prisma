@@ -18,3 +18,19 @@ model Manual {
   createdAt    DateTime @default(now())
 }
 
+model ActivityLog {
+  id        String   @id @default(cuid())
+  type      String   // LOGIN, APP_USAGE, REGISTRATION
+  userId    String?
+  userName  String?
+  userEmail String?
+  details   String?  // JSON string for additional details like app name
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([createdAt])
+  @@index([userId])
+}
+

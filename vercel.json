@@ -1,10 +1,10 @@
 {
-  "functions": {
-    "src/app/api/ecrew/sync/route.ts": {
-      "maxDuration": 60,
-      "memory": 1024
+  "crons": [
+    {
+      "path": "/api/reports/daily",
+      "schedule": "0 6 * * *"
     }
-  },
+  ],
   "rewrites": [
     {
       "source": "/api/:path*",

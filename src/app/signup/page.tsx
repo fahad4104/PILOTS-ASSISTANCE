@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { logRegistration } from "@/lib/activity-logger";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -55,6 +56,9 @@ export default function SignupPage() {
 
       if (data.success) {
         setSuccess(true);
+
+        // Log registration activity
+        logRegistration(name.trim(), email.trim());
 
         // Redirect to login after 3 seconds
         setTimeout(() => {

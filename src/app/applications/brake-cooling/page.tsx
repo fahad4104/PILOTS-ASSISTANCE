@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import { useAuth } from "@/contexts/AuthContext";
+import { logAppUsage } from "@/lib/activity-logger";
 
 // ============== AIRCRAFT CONFIGURATIONS ==============
 
@@ -279,11 +281,19 @@ function findMeltZoneSpeed(
 // ============== COMPONENT ==============
 
 export default function BrakeCoolingPage() {
+  const { user } = useAuth();
   const [aircraft, setAircraft] = useState<"777" | "787">("777");
   const [weight, setWeight] = useState<string>("");
   const [oat, setOat] = useState<string>("30");
   const [pressAlt, setPressAlt] = useState<string>("0");
   const [result, setResult] = useState<{ speed: number; energy: number; zone: string } | null>(null);
+
+  // Log app usage when page loads
+  useEffect(() => {
+    if (user) {
+      logAppUsage(user.id, user.name, user.email, "Brake Cooling Calculator");
+    }
+  }, [user]);
 
   const config = aircraft === "777" ? B777_CONFIG : B787_CONFIG;
 
