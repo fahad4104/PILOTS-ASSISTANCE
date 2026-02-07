@@ -56,12 +56,16 @@ interface NotamItem {
 }
 
 interface NotamInfo {
+  departureILS: NotamItem[];
+  departureRunway: NotamItem[];
+  departureOther: NotamItem[];
   destinationILS: NotamItem[];
   destinationRunway: NotamItem[];
   destinationOther: NotamItem[];
   alternateILS: NotamItem[];
   alternateRunway: NotamItem[];
   alternateOther: NotamItem[];
+  rawDepartureNotams: string;
   rawDestinationNotams: string;
   rawAlternateNotams: string;
 }
@@ -373,20 +377,26 @@ function generateWeatherSummary(taf: string): string {
 // Categorize LIDO NOTAM results into ILS/Runway/Other for the frontend cards
 function categorizeNotams(
   activeResults: ActiveResult[],
+  depIcao: string,
   destIcao: string,
   altIcao: string
 ): NotamInfo {
   const notams: NotamInfo = {
+    departureILS: [],
+    departureRunway: [],
+    departureOther: [],
     destinationILS: [],
     destinationRunway: [],
     destinationOther: [],
     alternateILS: [],
     alternateRunway: [],
     alternateOther: [],
+    rawDepartureNotams: "",
     rawDestinationNotams: "",
     rawAlternateNotams: "",
   };
 
+  const rawDepLines: string[] = [];
   const rawDestLines: string[] = [];
   const rawAltLines: string[] = [];
 
@@ -414,6 +424,14 @@ function categorizeNotams(
       isRelevant: true,
     };
 
+    // Departure NOTAMs
+    if (ar.depActive && r.airport === depIcao) {
+      rawDepLines.push(r.text);
+      if (isILS) notams.departureILS.push(notamItem);
+      else if (isRunway) notams.departureRunway.push(notamItem);
+      else notams.departureOther.push(notamItem);
+    }
+
     // Destination NOTAMs
     if (ar.destActive && r.airport === destIcao) {
       rawDestLines.push(r.text);
@@ -431,6 +449,7 @@ function categorizeNotams(
     }
   }
 
+  notams.rawDepartureNotams = rawDepLines.join("\n\n");
   notams.rawDestinationNotams = rawDestLines.join("\n\n");
   notams.rawAlternateNotams = rawAltLines.join("\n\n");
 
@@ -720,9 +739,10 @@ export async function POST(req: Request) {
 
     // Deterministic LIDO NOTAM parsing (OFF BLOCK / LANDING based)
     let notams: NotamInfo = {
+      departureILS: [], departureRunway: [], departureOther: [],
       destinationILS: [], destinationRunway: [], destinationOther: [],
       alternateILS: [], alternateRunway: [], alternateOther: [],
-      rawDestinationNotams: "", rawAlternateNotams: "",
+      rawDepartureNotams: "", rawDestinationNotams: "", rawAlternateNotams: "",
     };
     let enhancedNotams: ReturnType<typeof buildEnhancedNotams> | null = null;
 
@@ -754,7 +774,7 @@ export async function POST(req: Request) {
             const parseWarnings = records.flatMap(r => r.parseWarnings);
 
             // Build categorized NOTAMs (ILS/Runway/Other) for the cards
-            notams = categorizeNotams(activeResults, destIcao, altICAO);
+            notams = categorizeNotams(activeResults, depIcao, destIcao, altICAO);
 
             // Build enhanced NOTAMs for the time-filtered view
             enhancedNotams = buildEnhancedNotams(

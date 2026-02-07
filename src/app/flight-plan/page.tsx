@@ -297,6 +297,30 @@ function generateSummaryText(data: Output): string {
   lines.push(`Trip Time: ${data.fuel?.tripTime || "—"}`);
   lines.push("");
 
+  // Departure NOTAMs
+  lines.push("─".repeat(50));
+  lines.push(`DEPARTURE NOTAMs (${data.flight?.departure || "—"})`);
+  const depILS = data.notams?.departureILS || [];
+  const depRWY = data.notams?.departureRunway || [];
+  const depOther = data.notams?.departureOther || [];
+
+  if (depILS.length > 0) {
+    lines.push("  ILS/Approach:");
+    depILS.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+  }
+  if (depRWY.length > 0) {
+    lines.push("  Runway:");
+    depRWY.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+  }
+  if (depOther.length > 0) {
+    lines.push("  Other:");
+    depOther.forEach((n: NotamItem) => lines.push(`    • ${getNotamText(n)}`));
+  }
+  if (depILS.length === 0 && depRWY.length === 0 && depOther.length === 0) {
+    lines.push("  ✓ No relevant NOTAMs");
+  }
+  lines.push("");
+
   // Destination NOTAMs
   lines.push("─".repeat(50));
   lines.push("DESTINATION NOTAMs");
@@ -600,8 +624,44 @@ export default function FlightPlanPage() {
               </div>
             </Card>
 
-            {/* NOTAMs - Organized by Category */}
-            <Card title="Destination NOTAMs (Arrival-Relevant)" icon="📢">
+            {/* Departure NOTAMs */}
+            <Card title={`Departure NOTAMs - ${safeString(data.flight?.departure)}`} icon="🛫">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <ListField
+                  label="ILS / Approach"
+                  items={data.notams?.departureILS}
+                  type={data.notams?.departureILS?.length > 0 ? "warning" : "default"}
+                  onCardClick={() => {
+                    const items = data.notams?.departureILS || [];
+                    const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                    openNotamModal("Departure - ILS / Approach NOTAMs", content);
+                  }}
+                />
+                <ListField
+                  label="Runway"
+                  items={data.notams?.departureRunway}
+                  type={data.notams?.departureRunway?.length > 0 ? "warning" : "default"}
+                  onCardClick={() => {
+                    const items = data.notams?.departureRunway || [];
+                    const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                    openNotamModal("Departure - Runway NOTAMs", content);
+                  }}
+                />
+                <ListField
+                  label="Other"
+                  items={data.notams?.departureOther}
+                  type="info"
+                  onCardClick={() => {
+                    const items = data.notams?.departureOther || [];
+                    const content = items.map((item: NotamItem) => getRawNotamText(item)).join("\n\n" + "─".repeat(40) + "\n\n");
+                    openNotamModal("Departure - Other NOTAMs", content);
+                  }}
+                />
+              </div>
+            </Card>
+
+            {/* Destination NOTAMs */}
+            <Card title={`Destination NOTAMs - ${safeString(data.flight?.destination)}`} icon="🛬">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <ListField
                   label="ILS / Approach"
