@@ -11,6 +11,7 @@ import {
   ActiveResult,
   NotamRecord,
 } from "@/lib/lidoNotam";
+import { extractWeatherBlocks, WeatherBlock } from "@/lib/lidoWeather";
 const pdf = require("pdf-parse");
 
 export const runtime = "nodejs";
@@ -40,11 +41,18 @@ interface FlightInfo {
   alternateTime: string;
 }
 
+interface WeatherBlockInfo {
+  icao: string;
+  name?: string;
+  metar?: string;
+  taf?: string;
+  raw: string;
+}
+
 interface WeatherInfo {
-  destinationTAF: string;
-  destinationSummary: string;
-  alternateTAF: string;
-  alternateSummary: string;
+  departure?: WeatherBlockInfo;
+  destination?: WeatherBlockInfo;
+  alternate?: WeatherBlockInfo;
 }
 
 interface NotamItem {
@@ -235,143 +243,30 @@ function parseFlightInfo(text: string): FlightInfo {
   return info;
 }
 
-function parseWeather(text: string, destICAO: string, altICAO: string): WeatherInfo {
-  const weather: WeatherInfo = {
-    destinationTAF: "",
-    destinationSummary: "",
-    alternateTAF: "",
-    alternateSummary: "",
-  };
+// Map LIDO weather blocks to the structured WeatherInfo format
+function buildWeatherInfo(ofpText: string): WeatherInfo {
+  const blocks = extractWeatherBlocks(ofpText);
+  const weather: WeatherInfo = {};
 
-  // Look for TAF sections - pattern from actual OFP format
-  // Format: "DESTINATION AIRPORT: RPLL/MNL ..." followed by "FT ..." (Forecast Terminal)
-  if (destICAO) {
-    // Pattern 1: Look for "DESTINATION AIRPORT:" section, then find "FT " (Forecast Terminal)
-    const destSectionIndex = text.toUpperCase().indexOf("DESTINATION AIRPORT:");
-    if (destSectionIndex >= 0) {
-      const destSection = text.substring(destSectionIndex);
-      // Look for FT in the destination section
-      const ftMatch = destSection.match(/FT\s+\d{6}\s+\d{6}\/\d{4}[\s\S]{0,2000}?(?==|\n\n|ALTERNATE|$)/i);
-      if (ftMatch && ftMatch[0]) {
-        const taf = ftMatch[0].replace(/\s+/g, " ").trim();
-        weather.destinationTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.destinationSummary = generateWeatherSummary(taf);
-      }
-    }
-    
-    // Pattern 2: If not found, look for FT near the ICAO code
-    if (!weather.destinationTAF) {
-      const ftMatch = text.match(new RegExp(
-        `${destICAO}[\\s\\S]{0,2000}?(FT\\s+\\d{6}\\s+\\d{6}/\\d{4}[\\s\\S]{0,2000}?)(?==|\\n\\n|ALTERNATE|$)`,
-        "i"
-      ));
-      if (ftMatch && ftMatch[1]) {
-        const taf = ftMatch[1].replace(/\s+/g, " ").trim();
-        weather.destinationTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.destinationSummary = generateWeatherSummary(taf);
-      }
-    }
-    
-    // Pattern 3: Old pattern - look for TAF keyword
-    if (!weather.destinationTAF) {
-      const destTAFRegex = new RegExp(
-        `${destICAO}[\\s\\S]{0,500}?TAF[\\s\\S]{0,1500}?(?=\\n\\n|[A-Z]{4}\\s+(?:METAR|TAF)|TREND|FC\\s|$|\\d{6}Z\\s)`,
-        "i"
-      );
-      const destMatch = text.match(destTAFRegex);
-      if (destMatch) {
-        const taf = destMatch[0].replace(/\s+/g, " ").trim();
-        weather.destinationTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.destinationSummary = generateWeatherSummary(taf);
-      }
-    }
-  }
+  for (const block of blocks) {
+    const info: WeatherBlockInfo = {
+      icao: block.icao,
+      name: block.name,
+      metar: block.metar,
+      taf: block.taf,
+      raw: block.raw,
+    };
 
-  // Alternate TAF
-  if (altICAO) {
-    // Pattern 1: Look for "ALTERNATE AIRPORT:" section, then find "FT "
-    const altSectionIndex = text.toUpperCase().indexOf("ALTERNATE AIRPORT:");
-    if (altSectionIndex >= 0) {
-      const altSection = text.substring(altSectionIndex);
-      // Look for FT in the alternate section
-      const ftMatch = altSection.match(/FT\s+\d{6}\s+\d{6}\/\d{4}[\s\S]{0,2000}?(?==|\n\n|$)/i);
-      if (ftMatch && ftMatch[0]) {
-        const taf = ftMatch[0].replace(/\s+/g, " ").trim();
-        weather.alternateTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.alternateSummary = generateWeatherSummary(taf);
-      }
-    }
-    
-    // Pattern 2: If not found, look for FT near the alternate ICAO code
-    if (!weather.alternateTAF) {
-      const altFTMatch = text.match(new RegExp(
-        `${altICAO}[\\s\\S]{0,2000}?(FT\\s+\\d{6}\\s+\\d{6}/\\d{4}[\\s\\S]{0,2000}?)(?==|\\n\\n|$)`,
-        "i"
-      ));
-      if (altFTMatch && altFTMatch[1]) {
-        const taf = altFTMatch[1].replace(/\s+/g, " ").trim();
-        weather.alternateTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.alternateSummary = generateWeatherSummary(taf);
-      }
-    }
-    
-    // Pattern 3: Old pattern
-    if (!weather.alternateTAF) {
-      const altTAFRegex = new RegExp(
-        `${altICAO}[\\s\\S]{0,500}?TAF[\\s\\S]{0,1500}?(?=\\n\\n|[A-Z]{4}\\s+(?:METAR|TAF)|TREND|FC\\s|$|\\d{6}Z\\s)`,
-        "i"
-      );
-      const altMatch = text.match(altTAFRegex);
-      if (altMatch) {
-        const taf = altMatch[0].replace(/\s+/g, " ").trim();
-        weather.alternateTAF = taf.length > 1000 ? taf.substring(0, 1000) + "..." : taf;
-        weather.alternateSummary = generateWeatherSummary(taf);
-      }
+    if (block.kind === "DEP" && !weather.departure) {
+      weather.departure = info;
+    } else if (block.kind === "ARR" && !weather.destination) {
+      weather.destination = info;
+    } else if (block.kind === "ALTN" && !weather.alternate) {
+      weather.alternate = info;
     }
   }
 
   return weather;
-}
-
-function generateWeatherSummary(taf: string): string {
-  if (!taf || taf.length < 10) return "No weather data available";
-
-  const parts: string[] = [];
-
-  // Wind
-  const windMatch = taf.match(/(\d{3})(\d{2,3})(?:G(\d{2,3}))?KT/);
-  if (windMatch) {
-    parts.push(`Wind ${windMatch[1]}°/${windMatch[2]}kt${windMatch[3] ? ` G${windMatch[3]}kt` : ""}`);
-  } else if (taf.match(/VRB(\d{2})KT/)) {
-    const vrb = taf.match(/VRB(\d{2})KT/);
-    if (vrb) parts.push(`Wind Variable ${vrb[1]}kt`);
-  }
-
-  // Visibility
-  if (taf.includes("9999")) {
-    parts.push("Vis 10km+");
-  } else if (taf.includes("CAVOK")) {
-    parts.push("CAVOK");
-  } else {
-    const vis = taf.match(/\s(\d{4})\s/);
-    if (vis && parseInt(vis[1]) < 9999) parts.push(`Vis ${vis[1]}m`);
-  }
-
-  // Weather
-  const wx: string[] = [];
-  if (taf.includes("-RA")) wx.push("light rain");
-  else if (taf.includes("+RA")) wx.push("heavy rain");
-  else if (taf.includes("RA")) wx.push("rain");
-  if (taf.includes("SHRA")) wx.push("showers");
-  if (taf.includes("TS")) wx.push("thunderstorms");
-  if (taf.includes("FG")) wx.push("fog");
-  if (wx.length) parts.push(wx.join(", "));
-
-  // Temperature
-  const temp = taf.match(/TX(\d+)\/.*?TN(\d+)/);
-  if (temp) parts.push(`Temp ${temp[2]}-${temp[1]}°C`);
-
-  return parts.join(" • ") || "Conditions not specified";
 }
 
 // Categorize LIDO NOTAM results into ILS/Runway/Other for the frontend cards
@@ -732,7 +627,7 @@ export async function POST(req: Request) {
       }
     }
     
-    const weather = parseWeather(extracted.text, destICAO, altICAO);
+    const weather = buildWeatherInfo(extracted.text);
     const fuel = parseFuel(extracted.text);
     const windShear = parseWindShear(extracted.text);
     const mora = parseMORA(extracted.text);

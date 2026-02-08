@@ -226,28 +226,48 @@ function ListField({
   );
 }
 
-// Weather Display Component
-function WeatherCard({ title, taf, summary }: { title: string; taf: unknown; summary: unknown }) {
-  // Safely convert to string to prevent React rendering errors
-  const safeTaf = typeof taf === "string" ? taf : (taf ? String(taf) : "");
-  const safeSummary = typeof summary === "string" ? summary : (summary ? String(summary) : "");
+// Weather Display Component (supports METAR + TAF)
+function WeatherCard({ title, icao, name, metar, taf }: {
+  title: string;
+  icao?: string;
+  name?: string;
+  metar?: string;
+  taf?: string;
+}) {
+  const safeMetar = typeof metar === "string" ? metar : "";
+  const safeTaf = typeof taf === "string" ? taf : "";
+  const hasData = safeMetar || safeTaf;
 
   return (
     <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-5">
       <div className="mb-3 flex items-center gap-2">
         <span className="text-2xl">🌤️</span>
         <h4 className="font-semibold text-gray-900">{title}</h4>
+        {icao && (
+          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+            {icao}{name ? ` - ${name}` : ""}
+          </span>
+        )}
       </div>
-      {safeTaf ? (
-        <>
-          <div className="mb-3 rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400">
-            {safeTaf}
-          </div>
-          <div className="text-sm text-gray-700">
-            <span className="font-semibold">Summary: </span>
-            {safeSummary || "N/A"}
-          </div>
-        </>
+      {hasData ? (
+        <div className="space-y-3">
+          {safeMetar && (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">METAR</div>
+              <div className="rounded-lg bg-gray-900 p-3 font-mono text-xs text-green-400">
+                {safeMetar}
+              </div>
+            </div>
+          )}
+          {safeTaf && (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">TAF</div>
+              <div className="rounded-lg bg-gray-900 p-3 font-mono text-xs text-amber-300">
+                {safeTaf}
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="text-sm text-gray-500">No weather data available</div>
       )}
@@ -374,13 +394,20 @@ function generateSummaryText(data: Output): string {
   // Weather
   lines.push("─".repeat(50));
   lines.push("WEATHER");
-  if (data.weather?.destinationTAF) {
-    lines.push(`Destination TAF:`);
-    lines.push(`  ${data.weather.destinationTAF}`);
+  if (data.weather?.departure) {
+    lines.push(`Departure (${data.weather.departure.icao}):`);
+    if (data.weather.departure.metar) lines.push(`  METAR: ${data.weather.departure.metar}`);
+    if (data.weather.departure.taf) lines.push(`  TAF: ${data.weather.departure.taf}`);
   }
-  if (data.weather?.alternateTAF) {
-    lines.push(`Alternate TAF:`);
-    lines.push(`  ${data.weather.alternateTAF}`);
+  if (data.weather?.destination) {
+    lines.push(`Destination (${data.weather.destination.icao}):`);
+    if (data.weather.destination.metar) lines.push(`  METAR: ${data.weather.destination.metar}`);
+    if (data.weather.destination.taf) lines.push(`  TAF: ${data.weather.destination.taf}`);
+  }
+  if (data.weather?.alternate) {
+    lines.push(`Alternate (${data.weather.alternate.icao}):`);
+    if (data.weather.alternate.metar) lines.push(`  METAR: ${data.weather.alternate.metar}`);
+    if (data.weather.alternate.taf) lines.push(`  TAF: ${data.weather.alternate.taf}`);
   }
   lines.push("");
 
@@ -609,16 +636,31 @@ export default function FlightPlanPage() {
             {/* Weather Section */}
             <Card title="Weather Information" icon="🌤️">
               <div className="space-y-4">
-                <WeatherCard 
-                  title="Destination Weather"
-                  taf={data.weather?.destinationTAF}
-                  summary={data.weather?.destinationSummary}
-                />
-                {data.weather?.alternateTAF && (
-                  <WeatherCard 
+                {data.weather?.departure && (
+                  <WeatherCard
+                    title="Departure Weather"
+                    icao={data.weather.departure.icao}
+                    name={data.weather.departure.name}
+                    metar={data.weather.departure.metar}
+                    taf={data.weather.departure.taf}
+                  />
+                )}
+                {data.weather?.destination && (
+                  <WeatherCard
+                    title="Destination Weather"
+                    icao={data.weather.destination.icao}
+                    name={data.weather.destination.name}
+                    metar={data.weather.destination.metar}
+                    taf={data.weather.destination.taf}
+                  />
+                )}
+                {data.weather?.alternate && (
+                  <WeatherCard
                     title="Alternate Weather"
-                    taf={data.weather?.alternateTAF}
-                    summary={data.weather?.alternateSummary}
+                    icao={data.weather.alternate.icao}
+                    name={data.weather.alternate.name}
+                    metar={data.weather.alternate.metar}
+                    taf={data.weather.alternate.taf}
                   />
                 )}
               </div>
