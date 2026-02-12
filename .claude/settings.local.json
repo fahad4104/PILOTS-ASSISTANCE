@@ -5,7 +5,16 @@
       "Bash(npx tsc:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "WebFetch(domain:pilots-assistance.vercel.app)",
+      "Bash(curl:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(git restore:*)",
+      "Bash(ls:*)",
+      "Bash(powershell -Command:*)"
     ]
   }
 }

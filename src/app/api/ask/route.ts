@@ -16,42 +16,69 @@ type Citation = {
   quote?: string;
 };
 
-function safeJsonParse<T = any>(text: string): T | null {
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
-  }
+type HistoryMessage = {
+  role?: unknown;
+  content?: unknown;
+};
+
+type JsonObject = Record<string, unknown>;
+
+function asObject(value: unknown): JsonObject {
+  return value && typeof value === "object" ? (value as JsonObject) : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+function sanitizeHistory(history: unknown): Array<{ role: "user" | "assistant"; content: string }> {
+  if (!Array.isArray(history)) return [];
+
+  return history
+    .map((item) => item as HistoryMessage)
+    .filter((item) => item.role === "user" || item.role === "assistant")
+    .map((item) => ({
+      role: item.role as "user" | "assistant",
+      content: String(item.content ?? "").trim(),
+    }))
+    .filter((item) => item.content.length > 0)
+    .slice(-8);
 }
 
 /**
  * Extract citations from multiple possible shapes of Responses API output.
  */
-function extractCitations(resp: any): Citation[] {
+function extractCitations(resp: unknown): Citation[] {
   const out: Citation[] = [];
-  const output = Array.isArray(resp?.output) ? resp.output : [];
+  const output = asArray(asObject(resp).output);
 
   for (const item of output) {
-    const content = Array.isArray(item?.content) ? item.content : [];
+    const itemObj = asObject(item);
+    const content = asArray(itemObj.content);
 
     for (const part of content) {
-      const anns = Array.isArray(part?.annotations) ? part.annotations : [];
+      const partObj = asObject(part);
+      const anns = asArray(partObj.annotations);
 
-      for (const a of anns) {
-        if (a?.type !== "file_citation") continue;
+      for (const annotation of anns) {
+        const annotationObj = asObject(annotation);
+        if (annotationObj.type !== "file_citation") continue;
 
-        const fc = a.file_citation ?? null;
-        const file_id = fc?.file_id ?? a.file_id ?? undefined;
-        const quote = fc?.quote ?? a.quote ?? undefined;
+        const fileCitation = asObject(annotationObj.file_citation);
+        const file_id = asString(fileCitation.file_id) ?? asString(annotationObj.file_id);
+        const quote = asString(fileCitation.quote) ?? asString(annotationObj.quote);
 
-        const index =
-          typeof fc?.index === "number"
-            ? fc.index
-            : typeof a.index === "number"
-            ? a.index
-            : undefined;
+        const index = asNumber(fileCitation.index) ?? asNumber(annotationObj.index);
 
-        const filename = a.filename ?? fc?.filename ?? undefined;
+        const filename = asString(annotationObj.filename) ?? asString(fileCitation.filename);
 
         // Don't calculate approximate page - it's misleading due to blank pages/images
         const page = undefined;
@@ -67,20 +94,16 @@ function extractCitations(resp: any): Citation[] {
       }
     }
 
-    const itemAnns = Array.isArray(item?.annotations) ? item.annotations : [];
-    for (const a of itemAnns) {
-      if (a?.type !== "file_citation") continue;
-      const fc = a.file_citation ?? null;
+    const itemAnns = asArray(itemObj.annotations);
+    for (const annotation of itemAnns) {
+      const annotationObj = asObject(annotation);
+      if (annotationObj.type !== "file_citation") continue;
+      const fileCitation = asObject(annotationObj.file_citation);
 
-      const file_id = fc?.file_id ?? a.file_id ?? undefined;
-      const quote = fc?.quote ?? a.quote ?? undefined;
-      const index =
-        typeof fc?.index === "number"
-          ? fc.index
-          : typeof a.index === "number"
-          ? a.index
-          : undefined;
-      const filename = a.filename ?? fc?.filename ?? undefined;
+      const file_id = asString(fileCitation.file_id) ?? asString(annotationObj.file_id);
+      const quote = asString(fileCitation.quote) ?? asString(annotationObj.quote);
+      const index = asNumber(fileCitation.index) ?? asNumber(annotationObj.index);
+      const filename = asString(annotationObj.filename) ?? asString(fileCitation.filename);
 
       const page = undefined;
 
@@ -101,25 +124,28 @@ function extractCitations(resp: any): Citation[] {
   return deduped;
 }
 
-function fileSearchHadResults(resp: any): boolean {
-  const output = Array.isArray(resp?.output) ? resp.output : [];
+function fileSearchHadResults(resp: unknown): boolean {
+  const output = asArray(asObject(resp).output);
 
   for (const item of output) {
-    const toolName = item?.tool_name ?? item?.name ?? item?.tool?.name;
-    const type = item?.type;
+    const itemObj = asObject(item);
+    const toolName =
+      asString(itemObj.tool_name) ??
+      asString(itemObj.name) ??
+      asString(asObject(itemObj.tool).name);
+    const type = asString(itemObj.type);
 
     if (type === "tool_call" && toolName === "file_search") {
-      const results =
-        item?.results ??
-        item?.output ??
-        item?.result ??
-        item?.file_search?.results ??
-        item?.file_search?.data;
+      const fileSearchObj = asObject(itemObj.file_search);
+      const resultCandidates = [
+        asArray(itemObj.results),
+        asArray(itemObj.output),
+        asArray(itemObj.result),
+        asArray(fileSearchObj.results),
+        asArray(fileSearchObj.data),
+      ];
 
-      if (Array.isArray(results) && results.length > 0) return true;
-
-      const r2 = item?.file_search?.results;
-      if (Array.isArray(r2) && r2.length > 0) return true;
+      if (resultCandidates.some((candidate) => candidate.length > 0)) return true;
 
       return false;
     }
@@ -196,8 +222,9 @@ function normalizeAnswer(answerText: string, citations: Citation[]) {
 
 export async function POST(req: Request) {
   try {
-    const { question, lang } = await req.json();
+    const { question, lang, history } = await req.json();
     const q = String(question || "").trim();
+    const chatHistory = sanitizeHistory(history);
 
     if (!q) {
       return NextResponse.json({ ok: false, error: "Missing question" }, { status: 400 });
@@ -308,6 +335,12 @@ The system automatically adds references after your output.
 REMEMBER: You are supporting flight safety. Complete, accurate, comprehensive information is essential.
 `;
 
+    const input: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: system },
+      ...chatHistory,
+      { role: "user", content: q },
+    ];
+
     const resp = await openai.responses.create({
       model: "gpt-5.1",
       temperature: 0,
@@ -315,10 +348,7 @@ REMEMBER: You are supporting flight safety. Complete, accurate, comprehensive in
 
       tool_choice: { type: "file_search" },
 
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: q },
-      ],
+      input,
 
       tools: [
         {
@@ -358,9 +388,9 @@ REMEMBER: You are supporting flight safety. Complete, accurate, comprehensive in
       answer: answerTextFinal,
       citations,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
     return NextResponse.json(
-      { ok: false, error: "Ask failed", details: String(e?.message ?? e) },
+      { ok: false, error: "Ask failed", details: String(e instanceof Error ? e.message : e) },
       { status: 500 }
     );
   }
